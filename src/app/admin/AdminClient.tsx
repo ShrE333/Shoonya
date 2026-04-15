@@ -57,11 +57,20 @@ export default function AdminClient({ adminProfile, profiles, loans, kycs }: Pro
         body: JSON.stringify({ userId, phone, name }),
       })
       const data = await res.json()
+      
       if (!res.ok) throw new Error(data.error || 'Failed to send')
-      toast.success(`KYC link generated & sent to ${name}`)
+      
+      if (data.warning) {
+        toast.warning(`Link generated, but WhatsApp failed: ${data.warning}`, {
+          duration: 6000
+        })
+      } else {
+        toast.success(`KYC link sent to ${name} via WhatsApp!`)
+      }
+      
       router.refresh()
-    } catch {
-      toast.error('Failed to send KYC link. Check Twilio credentials.')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send KYC link. Check Twilio credentials.')
     } finally {
       setSendingKYC(null)
     }
