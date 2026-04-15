@@ -129,7 +129,7 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, py: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(color: Colors.deepPurple.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
                     child: Text('$_durationInMonths mo', style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),

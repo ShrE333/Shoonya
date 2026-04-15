@@ -190,7 +190,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
               LinearProgressIndicator(
                 value: 0.75,
                 backgroundColor: Colors.white10,
-                color: Colors.emeraldAccent.withOpacity(0.8),
+                color: const Color(0xFF10B981).withOpacity(0.8),
                 borderRadius: BorderRadius.circular(10),
                 minHeight: 8,
               ),
@@ -199,9 +199,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Row(children: [
-                    Icon(Icons.check_circle, color: Colors.emeraldAccent, size: 16),
+                    Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 16),
                     SizedBox(width: 4),
-                    Text('Document Upload', style: TextStyle(color: Colors.emeraldAccent, fontSize: 12)),
+                    Text('Document Upload', style: TextStyle(color: const Color(0xFF10B981), fontSize: 12)),
                   ]),
                   Text('Step 3 of 4: Video Interview', style: TextStyle(color: Colors.white54, fontSize: 12)),
                 ],
@@ -238,8 +238,8 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                           Text('VIDEO KYC: $_userName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(color: Colors.emeraldAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.emeraldAccent.withOpacity(0.4))),
-                            child: const Text('ONLINE & VERIFIED', style: TextStyle(color: Colors.emeraldAccent, fontSize: 8, fontWeight: FontWeight.bold)),
+                            decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.2), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4))),
+                            child: const Text('ONLINE & VERIFIED', style: TextStyle(color: const Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.bold)),
                           )
                         ],
                       ),
@@ -255,9 +255,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                         Container(
                           width: 180, height: 230,
                           decoration: BoxDecoration(
-                            border: Border.all(color: _faceDetected ? Colors.emeraldAccent : Colors.white24, width: 2),
+                            border: Border.all(color: _faceDetected ? const Color(0xFF10B981) : Colors.white24, width: 2),
                             borderRadius: BorderRadius.circular(100),
-                            boxShadow: _faceDetected ? [BoxShadow(color: Colors.emeraldAccent.withOpacity(0.2), blurRadius: 20, spreadRadius: 2)] : [],
+                            boxShadow: _faceDetected ? [BoxShadow(color: const Color(0xFF10B981).withOpacity(0.2), blurRadius: 20, spreadRadius: 2)] : [],
                           ),
                         ),
                         const SizedBox(height: 20),
@@ -325,15 +325,15 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           height: 56,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.emeraldAccent.withOpacity(0.5)),
-            color: Colors.emeraldAccent.withOpacity(0.05),
+            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5)),
+            color: const Color(0xFF10B981).withOpacity(0.05),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.graphic_eq, color: Colors.emeraldAccent),
+              const Icon(Icons.graphic_eq, color: const Color(0xFF10B981)),
               const SizedBox(width: 12),
-              Text('RECORDING INITIATED — ${_blinkCount}/2 BLINKS', style: const TextStyle(color: Colors.emeraldAccent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+              Text('RECORDING INITIATED — ${_blinkCount}/2 BLINKS', style: const TextStyle(color: const Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 0.5)),
             ],
           ),
         ),
@@ -363,7 +363,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Widget _buildDone() {
     return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      const Icon(Icons.check_circle, color: Colors.emeraldAccent, size: 80),
+      const Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 80),
       const SizedBox(height: 24),
       const Text('KYC VERIFIED SUCCESSFULLY', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),
@@ -375,7 +375,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Widget _transcriptLine(String time, String author, String text) {
     return RichText(text: TextSpan(style: const TextStyle(fontSize: 11, color: Colors.white38), children: [
-      TextSpan(text: '$time: ', style: const TextStyle(color: Colors.emeraldAccent)),
+      TextSpan(text: '$time: ', style: const TextStyle(color: const Color(0xFF10B981))),
       TextSpan(text: '$author: ', style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
       TextSpan(text: text),
     ]));
@@ -397,7 +397,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     return BottomNavigationBar(
       backgroundColor: const Color(0xFF0F172A),
       type: BottomNavigationBarType.fixed,
-      selectedItemColor: Colors.emeraldAccent,
+      selectedItemColor: const Color(0xFF10B981),
       unselectedItemColor: Colors.white30,
       currentIndex: 1,
       items: const [
