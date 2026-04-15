@@ -43,14 +43,6 @@ export async function POST(req: Request) {
 
     const message = `Hello ${name || 'there'} 👋\n\nYour KYC verification link for *Shoonya* is ready.\n\nClick here to verify: ${kycLink}\n\n⏰ This link expires in 24 hours.\n\n_Shoonya Financial Services_`
 
-    const twilioResp = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64')}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
     // Clean the phone number (remove any non-digit characters)
     const cleanPhone = phone.replace(/\D/g, '')
     // Use the cleaned phone number, ensuring it has the correct international format
@@ -93,6 +85,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, token, messageSid: twilioData.sid })
   } catch (error: any) {
+    console.error('API Error:', error)
     return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 })
   }
 }
