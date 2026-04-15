@@ -21,7 +21,8 @@ class _SplashScreenState extends State<SplashScreen> {
     final session = Supabase.instance.client.auth.currentSession;
     // Only redirect if we are STILL on the splash screen
     // This prevents interrupting deep links (like KYC)
-    if (mounted && GoRouter.of(context).location == '/') {
+    final currentLocation = GoRouterState.of(context).uri.path;
+    if (mounted && currentLocation == '/') {
       if (session != null) {
         context.go('/dashboard');
       } else {
