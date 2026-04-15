@@ -32,6 +32,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" android:host="localhost" android:pathPrefix="/kyc" />
                 <data android:scheme="https" android:host="localhost" android:pathPrefix="/kyc" />
+                <data android:scheme="https" android:host="shoonya-steel.vercel.app" android:pathPrefix="/kyc" />
                 <!-- Add your Ngrok or Vercel production domains here -->
             </intent-filter>
 
@@ -40,7 +41,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="shoonya" android:host="kyc" />
+                <data android:scheme="shoonya" android:host="shoonya" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

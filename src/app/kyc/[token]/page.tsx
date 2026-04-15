@@ -12,13 +12,13 @@ export default function KYCRedirectPage() {
     // Attempt automatic redirect to the Flutter app via custom scheme
     if (token) {
       setTimeout(() => {
-        window.location.href = `shoonya://kyc/${token}`;
+        window.location.href = `shoonya://shoonya/kyc/${token}`;
       }, 500);
     }
   }, [token])
 
   const handleManualRedirect = () => {
-    window.location.href = `shoonya://kyc/${token}`;
+    window.location.href = `shoonya://shoonya/kyc/${token}`;
   }
 
   return (
