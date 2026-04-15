@@ -9,7 +9,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:path/path.dart' as p;
 
 class KYCVerificationScreen extends StatefulWidget {
@@ -26,30 +25,29 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   final AudioPlayer _player = AudioPlayer();
   bool _isSpeaking = false;
   bool _isListening = false;
-  String _agentText = "Initializing secure session...";
-  int _currentStep = 0;
-  final List<String> _logs = [];
+  int _currentStep = 0; // 0: Init, 1: Language, 2: Name, 3: Age/DOB, 4: Work, 5: Salary, 6: LoanType, 7: Amount, 8: Timeline, 9: Done
+  
+  String _selectedLanguage = "en-IN"; // Default
+  String _agentText = "Initializing interview...";
+  final List<Map<String, String>> _transcript = [];
+  Map<String, dynamic> _loanData = {};
 
   // API Config
   final String sarvamApiKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
-  // The user will pass the Groq key via --dart-define
   final String groqApiKey = const String.fromEnvironment('GROQ_API_KEY');
 
-  // Camera & Detection
+  // Camera
   CameraController? _cam;
-  bool _faceDetected = false;
-  final _faceDetector = FaceDetector(options: FaceDetectorOptions(enableClassification: true, performanceMode: FaceDetectorMode.accurate));
 
   @override
   void initState() {
     super.initState();
-    _initEverything();
+    _initInterview();
   }
 
-  Future<void> _initEverything() async {
+  Future<void> _initInterview() async {
     await _initCamera();
-    // Start initial agent interaction
-    _startInterview();
+    _startFlow();
   }
 
   Future<void> _initCamera() async {
@@ -58,10 +56,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     _cam = CameraController(frontCam, ResolutionPreset.high, enableAudio: false);
     await _cam!.initialize();
     if (mounted) setState(() {});
-    _cam!.startImageStream((image) async {
-       // Minimal face check for UI guides
-       // (Keeping it lightweight to focus on Voice/Speech logic)
-    });
   }
 
   @override
@@ -69,38 +63,34 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     _recorder.dispose();
     _player.dispose();
     _cam?.dispose();
-    _faceDetector.close();
     super.dispose();
   }
 
-  // --- INTERVIEW LOGIC ---
+  // --- BRAIN: THE FLOW CONTROL ---
 
-  Future<void> _startInterview() async {
-    await Future.delayed(const Duration(seconds: 1));
-    _voicePrompt("Hello, I am your Shoonya Verification Officer. To begin, please state your full name.");
+  void _startFlow() async {
+    await Future.delayed(const Duration(seconds: 2));
+    _voicePrompt("Welcome to Shoonya. Please tell me which language you would like to continue in? English or Hindi?");
+    _currentStep = 1;
   }
 
   Future<void> _voicePrompt(String text) async {
+    if (!mounted) return;
     setState(() {
       _agentText = text;
       _isSpeaking = true;
-      _logs.add("OFFICER: $text");
+      _transcript.add({"role": "officer", "text": text});
     });
 
     try {
       final response = await http.post(
-        Uri.parse("https://api.sarvam.ai/text-to-speech"),
-        headers: {
-          "api-subscription-key": sarvamApiKey,
-          "Content-Type": "application/json",
-        },
+        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"), // Added v1 as per latest Sarvam docs
+        headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
-          "target_language_code": "en-IN",
-          "speaker": "shubh",
+          "target_language_code": _selectedLanguage,
+          "speaker": _selectedLanguage == "hi-IN" ? "ritu" : "shubh",
           "model": "bulbul:v3",
-          "pace": 1.0,
-          "speech_sample_rate": 24000,
         }),
       );
 
@@ -108,115 +98,123 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         final data = jsonDecode(response.body);
         final base64Audio = data['audios'][0];
         final bytes = base64Decode(base64Audio);
-        
         final tempDir = await getTemporaryDirectory();
-        final file = File(p.join(tempDir.path, "prompt.wav"));
+        final file = File(p.join(tempDir.path, "prompt_${DateTime.now().millisecondsSinceEpoch}.wav"));
         await file.writeAsBytes(bytes);
 
         await _player.play(DeviceFileSource(file.path));
         _player.onPlayerComplete.listen((event) {
           if (mounted) {
             setState(() => _isSpeaking = false);
-            _startListeningForUser();
+            _startListening();
           }
         });
+      } else {
+        debugPrint("TTS API ERROR: ${response.body}");
+        setState(() => _isSpeaking = false);
+        _startListening(); // Fail-safe
       }
     } catch (e) {
-      debugPrint("TTS Error: $e");
       setState(() => _isSpeaking = false);
+      _startListening();
     }
   }
 
-  Future<void> _startListeningForUser() async {
+  Future<void> _startListening() async {
     if (await _recorder.hasPermission()) {
       final tempDir = await getTemporaryDirectory();
-      final path = p.join(tempDir.path, "response.wav");
-      
+      final path = p.join(tempDir.path, "user_res_${DateTime.now().millisecondsSinceEpoch}.wav");
       await _recorder.start(const RecordConfig(encoder: AudioEncoder.wav), path: path);
       setState(() => _isListening = true);
-
-      // Auto-stop after 4 seconds of speech (minimal POC)
-      Timer(const Duration(seconds: 4), () => _stopAndProcess(path));
+      // Listen for 5 seconds
+      Timer(const Duration(seconds: 5), () => _processUserResponse(path));
     }
   }
 
-  Future<void> _stopAndProcess(String path) async {
+  Future<void> _processUserResponse(String path) async {
     if (!_isListening) return;
     await _recorder.stop();
-    if (!mounted) return;
     setState(() => _isListening = false);
 
-    // STT TRANSCRIPTION
-    _logs.add("...Processing your response...");
-    final transcript = await _transcribeAudio(path);
-    _logs.add("YOU: $transcript");
+    // 1. Transcription (Sarvam STT)
+    final transcript = await _stt(path);
+    if (!mounted) return;
+    setState(() => _transcript.add({"role": "user", "text": transcript}));
 
-    // GROQ REASONING
-    _processWithGroq(transcript);
+    // 2. Logic & Verification (Groq)
+    _decideNextStep(transcript);
   }
 
-  Future<String> _transcribeAudio(String audioPath) async {
+  Future<String> _stt(String audioPath) async {
     try {
-      final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/speech-to-text"));
+      final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/v1/speech-to-text"));
       request.headers["api-subscription-key"] = sarvamApiKey;
       request.fields["model"] = "saaras:v3";
-      request.fields["language_code"] = "en-IN";
+      request.fields["language_code"] = _currentStep == 1 ? "unknown" : _selectedLanguage; // Auto-detect for first step
       request.files.add(await http.MultipartFile.fromPath("file", audioPath));
 
       final response = await request.send();
       final resBody = await response.stream.bytesToString();
       final data = jsonDecode(resBody);
       return data['transcript'] ?? "";
-    } catch (e) {
-      return "Error transcribing speech.";
-    }
+    } catch (e) { return ""; }
   }
 
-  Future<void> _processWithGroq(String userText) async {
-    setState(() => _agentText = "Verifying...");
-    
+  Future<void> _decideNextStep(String userText) async {
+    setState(() => _agentText = "Processing...");
+
+    // System Prompt for Groq
+    String prompt = "";
+    if (_currentStep == 1) {
+      prompt = "Detect if the user wants English or Hindi. Return ONLY the JSON: {'language': 'hi-IN' or 'en-IN', 'next_question': 'Thank you. Please tell me your full name.'}";
+    } else {
+      prompt = "You are verifying a loan interview answer. Question was Step $_currentStep. User said: '$userText'. If this answer is valid for the question, identify the next question. Next questions are: 3:Age/DOB, 4:Work, 5:Salary, 6:Loan Type, 7:Amount, 8:Timeline, 9:Done. Return JSON: {'valid': true, 'data': 'extracted value', 'next_question': 'The next question text'}";
+    }
+
     try {
       final response = await http.post(
         Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
-        headers: {
-          "Authorization": "Bearer $groqApiKey",
-          "Content-Type": "application/json",
-        },
+        headers: {"Authorization": "Bearer $groqApiKey", "Content-Type": "application/json"},
         body: jsonEncode({
           "model": "llama-3.1-8b-instant",
-          "messages": [
-            {
-              "role": "system",
-              "content": "You are a professional Shoonya Bank KYC Officer. Current KYC Step: $_currentStep. The user just said: '$userText'. If this is the name step, confirm the name and move to 'Please blink twice for liveness verification'. If it's liveness, ask 'Please hold your identity document to the camera'. Always respond with a single, clear sentence to be spoken to the user."
-            },
-            {"role": "user", "content": userText}
-          ]
+          "response_format": {"type": "json_object"},
+          "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": userText}]
         }),
       );
 
-      final data = jsonDecode(response.body);
-      final reply = data['choices'][0]['message']['content'];
-      
-      _currentStep++;
-      if (_currentStep > 3) {
-        _voicePrompt("Thank you. Your identity has been verified. You may now return to the dashboard.");
-        _finalizeKYC();
+      final result = jsonDecode(jsonDecode(response.body)['choices'][0]['message']['content']);
+
+      if (_currentStep == 1) {
+        _selectedLanguage = result['language'];
+        _currentStep = 2;
+        _voicePrompt(result['next_question']);
       } else {
-        _voicePrompt(reply);
+        if (result['valid'] == true) {
+          _currentStep++;
+          if (_currentStep >= 9) {
+            _voicePrompt("Thank you for your time. Your loan application is now under review. Goodbye.");
+            _saveToSupabase();
+            Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
+          } else {
+            _voicePrompt(result['next_question']);
+          }
+        } else {
+          _voicePrompt("I'm sorry, I didn't quite catch that. Could you please repeat?");
+        }
       }
     } catch (e) {
-      _voicePrompt("I'm sorry, I couldn't process that. Could you repeat?");
+      _voicePrompt("Technology glitch. Let's try that again.");
     }
   }
 
-  Future<void> _finalizeKYC() async {
-     await Supabase.instance.client.from('kyc').update({
-       'status': 'completed',
-       'completed_at': DateTime.now().toIso8601String(),
-     }).eq('kyc_link', widget.token);
+  Future<void> _saveToSupabase() async {
+    final supabase = Supabase.instance.client;
+    await supabase.from('kyc').update({
+      'status': 'completed',
+      'interview_transcript': jsonEncode(_transcript),
+      'completed_at': DateTime.now().toIso8601String(),
+    }).eq('kyc_link', widget.token);
   }
-
-  // --- UI BUILDING ---
 
   @override
   Widget build(BuildContext context) {
@@ -225,63 +223,36 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header
-            Padding(
+            // Video Header
+            Container(
               padding: const EdgeInsets.all(24),
-              child: Row(
-                children: [
-                  IconButton(onPressed: () => context.pop(), icon: const Icon(Icons.arrow_back, color: Colors.white)),
-                  const Expanded(child: Center(child: Text("VIDEO KYC VERIFICATION", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)))),
-                  const Icon(Icons.security, color: Color(0xFF10B981), size: 16),
-                ],
-              ),
+              child: const Center(child: Text("AI LOAN INTERVIEW OFFICER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1))),
             ),
 
-            // Video Feed Area
+            // Video Feed
             Expanded(
-              flex: 3,
+              flex: 4,
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white10)),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(32),
+                  borderRadius: BorderRadius.circular(24),
                   child: Stack(
                     children: [
-                      if (_cam != null) Positioned.fill(child: CameraPreview(_cam!)),
-                      
-                      // Face Guide Overlay
+                      if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
                       Center(
-                        child: Container(
-                          width: 220, height: 280,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2),
-                            borderRadius: BorderRadius.circular(110),
-                          ),
-                        ),
+                        child: Container(width: 200, height: 260, decoration: BoxDecoration(border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2), borderRadius: BorderRadius.circular(100))),
                       ),
-
-                      // Status Badge
-                      Positioned(
-                        top: 20, right: 20,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-                          child: Row(children: [
-                            Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
-                            const SizedBox(width: 6),
-                            const Text("LIVE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                          ]),
-                        ),
-                      ),
+                      Positioned(top: 20, right: 20, child: _pulseIndicator()),
                     ],
                   ),
                 ),
               ),
             ),
 
-            // Agent Transcript area
+            // Dialog Log
             Expanded(
-              flex: 2,
+              flex: 3,
               child: Container(
                 margin: const EdgeInsets.all(24),
                 padding: const EdgeInsets.all(20),
@@ -289,18 +260,18 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("AGENT TRANSCRIPT", style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                    Text("ACTIVE TRANSCRIPT - STEP $_currentStep/8", style: const TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     Expanded(
                       child: ListView.builder(
-                        itemCount: _logs.length,
-                        itemBuilder: (context, i) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Text(_logs[i], style: TextStyle(
-                            color: _logs[i].startsWith("OFFICER") ? const Color(0xFF10B981) : Colors.white,
-                            fontSize: 13,
-                          )),
-                        ),
+                        itemCount: _transcript.length,
+                        itemBuilder: (context, i) {
+                          final msg = _transcript[i];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Text("${msg['role']!.toUpperCase()}: ${msg['text']}", style: TextStyle(color: msg['role'] == 'officer' ? const Color(0xFF10B981) : Colors.white70, fontSize: 13)),
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -308,24 +279,17 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
               ),
             ),
 
-            // Recording Status Bar
+            // Action Bar
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 24),
-              height: 64,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(32),
-                color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05),
-                border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10),
-              ),
+              height: 70,
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(35), color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
                   const SizedBox(width: 12),
-                  Text(
-                    _isListening ? "LISTENING..." : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE ENCRYPTED CHANNEL"),
-                    style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5),
-                  ),
+                  Text(_isListening ? "LISTENING CAREFULLY..." : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE LINE ACTIVE"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -333,23 +297,18 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
-  Widget _buildBottomNav() {
-    return BottomNavigationBar(
-      backgroundColor: const Color(0xFF0F172A),
-      type: BottomNavigationBarType.fixed,
-      selectedItemColor: const Color(0xFF10B981),
-      unselectedItemColor: Colors.white30,
-      currentIndex: 1,
-      items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
-        BottomNavigationBarItem(icon: Icon(Icons.verified_user), label: 'Verification'),
-        BottomNavigationBarItem(icon: Icon(Icons.description_outlined), label: 'Documents'),
-        BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
-      ],
+  Widget _pulseIndicator() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
+      child: Row(children: [
+        Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
+        const SizedBox(width: 6),
+        const Text("REC", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+      ]),
     );
   }
 }
