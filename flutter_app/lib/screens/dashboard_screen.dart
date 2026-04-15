@@ -31,7 +31,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           )
         ],
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
+      body: _supabase.auth.currentUser == null 
+        ? const Center(child: Text("Please login to view loans"))
+        : StreamBuilder<List<Map<String, dynamic>>>(
         stream: _supabase.from('loans').stream(primaryKey: ['id']).eq('user_id', _supabase.auth.currentUser!.id),
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());

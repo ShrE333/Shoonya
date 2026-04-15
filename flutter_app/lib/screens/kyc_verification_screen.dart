@@ -40,6 +40,13 @@ class KYCVerificationScreen extends StatefulWidget {
 class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   KYCStage _stage = KYCStage.permissions;
   CameraController? _cam;
+  
+  @override
+  void initState() {
+    super.initState();
+    // Auto-request permissions on entry
+    _requestAll();
+  }
   final _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
       enableClassification: true,
