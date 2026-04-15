@@ -20,6 +20,44 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
+// Shell Screen to provide persistent navigation
+class AppShell extends StatelessWidget {
+  final Widget child;
+  const AppShell({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    // Determine current index based on location
+    final location = GoRouterState.of(context).uri.path;
+    int index = 0;
+    if (location.startsWith('/dashboard')) index = 0;
+    else if (location.startsWith('/kyc')) index = 1;
+    else if (location.startsWith('/documents')) index = 2; // Dummy
+    else if (location.startsWith('/profile')) index = 3;   // Dummy
+
+    return Scaffold(
+      body: child,
+      bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: const Color(0xFF0F172A),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF10B981),
+        unselectedItemColor: Colors.white30,
+        currentIndex: index,
+        onTap: (i) {
+          if (i == 0) context.go('/dashboard');
+          if (i == 1) context.go('/kyc/demo'); // Demo link if not coming from deep link
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
+          BottomNavigationBarItem(icon: Icon(Icons.verified_user), label: 'Verification'),
+          BottomNavigationBarItem(icon: Icon(Icons.description_outlined), label: 'Documents'),
+          BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
+        ],
+      ),
+    );
+  }
+}
+
 final _router = GoRouter(
   initialLocation: '/',
   routes: [
@@ -35,24 +73,30 @@ final _router = GoRouter(
       path: '/signup',
       builder: (context, state) => const SignupScreen(),
     ),
-    GoRoute(
-      path: '/dashboard',
-      builder: (context, state) => const DashboardScreen(),
-    ),
-    GoRoute(
-      path: '/apply',
-      builder: (context, state) => const ApplyLoanScreen(),
-    ),
-    GoRoute(
-      path: '/chat',
-      builder: (context, state) => const ChatScreen(),
-    ),
-    GoRoute(
-      path: '/kyc/:token',
-      builder: (context, state) {
-        final token = state.pathParameters['token']!;
-        return KYCVerificationScreen(token: token);
-      },
+    // Auth-protected shell
+    ShellRoute(
+      builder: (context, state, child) => AppShell(child: child),
+      routes: [
+        GoRoute(
+          path: '/dashboard',
+          builder: (context, state) => const DashboardScreen(),
+        ),
+        GoRoute(
+          path: '/apply',
+          builder: (context, state) => const ApplyLoanScreen(),
+        ),
+        GoRoute(
+          path: '/chat',
+          builder: (context, state) => const ChatScreen(),
+        ),
+        GoRoute(
+          path: '/kyc/:token',
+          builder: (context, state) {
+            final token = state.pathParameters['token']!;
+            return KYCVerificationScreen(token: token);
+          },
+        ),
+      ],
     ),
   ],
 );

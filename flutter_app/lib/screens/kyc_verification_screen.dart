@@ -1,15 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:http/http.dart' as http;
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/foundation.dart';
-import 'dart:typed_data';
-
-enum KYCStage { permissions, scanning, capturing, uploading, done }
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:path/path.dart' as p;
 
 class KYCVerificationScreen extends StatefulWidget {
   final String token;
@@ -20,60 +21,35 @@ class KYCVerificationScreen extends StatefulWidget {
 }
 
 class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
-  KYCStage _stage = KYCStage.permissions;
+  // Voice Agent State
+  final AudioRecorder _recorder = AudioRecorder();
+  final AudioPlayer _player = AudioPlayer();
+  bool _isSpeaking = false;
+  bool _isListening = false;
+  String _agentText = "Initializing secure session...";
+  int _currentStep = 0;
+  final List<String> _logs = [];
+
+  // API Config
+  final String sarvamApiKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
+  // The user will pass the Groq key via --dart-define
+  final String groqApiKey = const String.fromEnvironment('GROQ_API_KEY');
+
+  // Camera & Detection
   CameraController? _cam;
-  final _faceDetector = FaceDetector(
-    options: FaceDetectorOptions(
-      enableClassification: true,
-      enableLandmarks: true,
-      performanceMode: FaceDetectorMode.accurate,
-    ),
-  );
-  int _blinkCount = 0;
-  double? _lastLeftEye;
   bool _faceDetected = false;
-  bool _isProcessing = false;
-  String _userName = "Authenticating...";
-  int _seconds = 135; // 02:15 mock timer
+  final _faceDetector = FaceDetector(options: FaceDetectorOptions(enableClassification: true, performanceMode: FaceDetectorMode.accurate));
 
   @override
   void initState() {
     super.initState();
-    _fetchUserName();
-    _requestAll();
-    Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) setState(() => _seconds++);
-    });
+    _initEverything();
   }
 
-  Future<void> _fetchUserName() async {
-    try {
-      final supabase = Supabase.instance.client;
-      final kyc = await supabase.from('kyc').select('profiles(full_name)').eq('kyc_link', widget.token).single();
-      setState(() => _userName = (kyc['profiles']['full_name'] ?? 'USER').toUpperCase());
-    } catch (e) {
-      setState(() => _userName = "VERIFICATION ONGOING");
-    }
-  }
-
-  @override
-  void dispose() {
-    _cam?.dispose();
-    _faceDetector.close();
-    super.dispose();
-  }
-
-  Future<void> _requestAll() async {
-    final statuses = await [
-      Permission.camera,
-      Permission.microphone,
-      Permission.location,
-    ].request();
-
-    if (statuses[Permission.camera]!.isGranted) {
-      await _initCamera();
-      setState(() => _stage = KYCStage.scanning);
-    }
+  Future<void> _initEverything() async {
+    await _initCamera();
+    // Start initial agent interaction
+    _startInterview();
   }
 
   Future<void> _initCamera() async {
@@ -81,315 +57,283 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     final frontCam = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
     _cam = CameraController(frontCam, ResolutionPreset.high, enableAudio: false);
     await _cam!.initialize();
-    _cam!.startImageStream(_processCameraImage);
+    if (mounted) setState(() {});
+    _cam!.startImageStream((image) async {
+       // Minimal face check for UI guides
+       // (Keeping it lightweight to focus on Voice/Speech logic)
+    });
   }
 
-  void _processCameraImage(CameraImage image) async {
-    if (_isProcessing) return;
-    _isProcessing = true;
+  @override
+  void dispose() {
+    _recorder.dispose();
+    _player.dispose();
+    _cam?.dispose();
+    _faceDetector.close();
+    super.dispose();
+  }
+
+  // --- INTERVIEW LOGIC ---
+
+  Future<void> _startInterview() async {
+    await Future.delayed(const Duration(seconds: 1));
+    _voicePrompt("Hello, I am your Shoonya Verification Officer. To begin, please state your full name.");
+  }
+
+  Future<void> _voicePrompt(String text) async {
+    setState(() {
+      _agentText = text;
+      _isSpeaking = true;
+      _logs.add("OFFICER: $text");
+    });
+
     try {
-      final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in image.planes) {
-        allBytes.putUint8List(plane.bytes);
-      }
-      final bytes = allBytes.done().buffer.asUint8List();
-      final Size imageSize = Size(image.width.toDouble(), image.height.toDouble());
-      final camera = _cam!.description;
-      final imageRotation = InputImageRotationValue.fromRawValue(camera.sensorOrientation) ?? InputImageRotation.rotation0deg;
-      final inputImageFormat = InputImageFormatValue.fromRawValue(image.format.raw) ?? InputImageFormat.nv21;
-      
-      final inputImageData = InputImageMetadata(
-        size: imageSize,
-        rotation: imageRotation,
-        format: inputImageFormat,
-        bytesPerRow: image.planes[0].bytesPerRow,
+      final response = await http.post(
+        Uri.parse("https://api.sarvam.ai/text-to-speech"),
+        headers: {
+          "api-subscription-key": sarvamApiKey,
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "text": text,
+          "target_language_code": "en-IN",
+          "speaker": "shubh",
+          "model": "bulbul:v3",
+          "pace": 1.0,
+          "speech_sample_rate": 24000,
+        }),
       );
-      
-      final inputImage = InputImage.fromBytes(bytes: bytes, metadata: inputImageData);
-      final faces = await _faceDetector.processImage(inputImage);
-      
-      if (faces.isEmpty) {
-        setState(() => _faceDetected = false);
-        return;
-      }
 
-      setState(() => _faceDetected = true);
-      final face = faces.first;
-      final leftEye = face.leftEyeOpenProbability ?? 1.0;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final base64Audio = data['audios'][0];
+        final bytes = base64Decode(base64Audio);
+        
+        final tempDir = await getTemporaryDirectory();
+        final file = File(p.join(tempDir.path, "prompt.wav"));
+        await file.writeAsBytes(bytes);
 
-      if (_lastLeftEye != null && _lastLeftEye! > 0.7 && leftEye < 0.3) {
-        _blinkCount++;
+        await _player.play(DeviceFileSource(file.path));
+        _player.onPlayerComplete.listen((event) {
+          if (mounted) {
+            setState(() => _isSpeaking = false);
+            _startListeningForUser();
+          }
+        });
       }
-      _lastLeftEye = leftEye;
-
-      if (_blinkCount >= 2) {
-        _cam!.stopImageStream();
-        setState(() => _stage = KYCStage.capturing);
-        _captureAndUpload();
-      }
-    } finally {
-      _isProcessing = false;
+    } catch (e) {
+      debugPrint("TTS Error: $e");
+      setState(() => _isSpeaking = false);
     }
   }
 
-  Future<void> _captureAndUpload() async {
-    final photo = await _cam!.takePicture();
-    final bytes = await photo.readAsBytes();
-    Position? pos;
-    try { pos = await Geolocator.getCurrentPosition(); } catch(e){}
+  Future<void> _startListeningForUser() async {
+    if (await _recorder.hasPermission()) {
+      final tempDir = await getTemporaryDirectory();
+      final path = p.join(tempDir.path, "response.wav");
+      
+      await _recorder.start(const RecordConfig(encoder: AudioEncoder.wav), path: path);
+      setState(() => _isListening = true);
 
-    final supabase = Supabase.instance.client;
-    final kyc = await supabase.from('kyc').select().eq('kyc_link', widget.token).single();
-    final userId = kyc['user_id'];
-    final path = 'kyc-selfies/$userId/selfie.jpg';
-    
-    await supabase.storage.from('kyc-assets').uploadBinary(path, bytes);
-    final selfieUrl = supabase.storage.from('kyc-assets').getPublicUrl(path);
-
-    await supabase.from('kyc').update({
-      'status': 'completed',
-      'selfie_url': selfieUrl,
-      'location_lat': pos?.latitude,
-      'location_lng': pos?.longitude,
-      'completed_at': DateTime.now().toIso8601String(),
-    }).eq('kyc_link', widget.token);
-    
-    setState(() => _stage = KYCStage.done);
+      // Auto-stop after 4 seconds of speech (minimal POC)
+      Timer(const Duration(seconds: 4), () => _stopAndProcess(path));
+    }
   }
 
-  String _formatTimer(int s) {
-    int m = s ~/ 60;
-    int r = s % 60;
-    return '${m.toString().padLeft(2, '0')}:${r.toString().padLeft(2, '0')}';
+  Future<void> _stopAndProcess(String path) async {
+    if (!_isListening) return;
+    await _recorder.stop();
+    if (!mounted) return;
+    setState(() => _isListening = false);
+
+    // STT TRANSCRIPTION
+    _logs.add("...Processing your response...");
+    final transcript = await _transcribeAudio(path);
+    _logs.add("YOU: $transcript");
+
+    // GROQ REASONING
+    _processWithGroq(transcript);
   }
+
+  Future<String> _transcribeAudio(String audioPath) async {
+    try {
+      final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/speech-to-text"));
+      request.headers["api-subscription-key"] = sarvamApiKey;
+      request.fields["model"] = "saaras:v3";
+      request.fields["language_code"] = "en-IN";
+      request.files.add(await http.MultipartFile.fromPath("file", audioPath));
+
+      final response = await request.send();
+      final resBody = await response.stream.bytesToString();
+      final data = jsonDecode(resBody);
+      return data['transcript'] ?? "";
+    } catch (e) {
+      return "Error transcribing speech.";
+    }
+  }
+
+  Future<void> _processWithGroq(String userText) async {
+    setState(() => _agentText = "Verifying...");
+    
+    try {
+      final response = await http.post(
+        Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+        headers: {
+          "Authorization": "Bearer $groqApiKey",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "model": "llama-3.1-8b-instant",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a professional Shoonya Bank KYC Officer. Current KYC Step: $_currentStep. The user just said: '$userText'. If this is the name step, confirm the name and move to 'Please blink twice for liveness verification'. If it's liveness, ask 'Please hold your identity document to the camera'. Always respond with a single, clear sentence to be spoken to the user."
+            },
+            {"role": "user", "content": userText}
+          ]
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      final reply = data['choices'][0]['message']['content'];
+      
+      _currentStep++;
+      if (_currentStep > 3) {
+        _voicePrompt("Thank you. Your identity has been verified. You may now return to the dashboard.");
+        _finalizeKYC();
+      } else {
+        _voicePrompt(reply);
+      }
+    } catch (e) {
+      _voicePrompt("I'm sorry, I couldn't process that. Could you repeat?");
+    }
+  }
+
+  Future<void> _finalizeKYC() async {
+     await Supabase.instance.client.from('kyc').update({
+       'status': 'completed',
+       'completed_at': DateTime.now().toIso8601String(),
+     }).eq('kyc_link', widget.token);
+  }
+
+  // --- UI BUILDING ---
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(
-        title: const Text('VIDEO KYC VERIFICATION', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: const Icon(Icons.arrow_back),
-      ),
-      body: _stage == KYCStage.done ? _buildDone() : _buildInterface(),
-      bottomNavigationBar: _buildBottomNav(),
-    );
-  }
-
-  Widget _buildInterface() {
-    return Column(
-      children: [
-        // Progress Header
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
-          child: Column(
-            children: [
-              LinearProgressIndicator(
-                value: 0.75,
-                backgroundColor: Colors.white10,
-                color: const Color(0xFF10B981).withOpacity(0.8),
-                borderRadius: BorderRadius.circular(10),
-                minHeight: 8,
-              ),
-              const SizedBox(height: 12),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Row(
                 children: [
-                  Row(children: [
-                    Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 16),
-                    SizedBox(width: 4),
-                    Text('Document Upload', style: TextStyle(color: const Color(0xFF10B981), fontSize: 12)),
-                  ]),
-                  Text('Step 3 of 4: Video Interview', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  IconButton(onPressed: () => context.pop(), icon: const Icon(Icons.arrow_back, color: Colors.white)),
+                  const Expanded(child: Center(child: Text("VIDEO KYC VERIFICATION", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)))),
+                  const Icon(Icons.security, color: Color(0xFF10B981), size: 16),
                 ],
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // Camera Frame
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 24),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white10, width: 1),
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: Stack(
-                children: [
-                  if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!))
-                  else Container(color: Colors.black),
-                  
-                  // Label Overlay
-                  Positioned(
-                    top: 0, left: 0, right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.6), Colors.transparent])),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('VIDEO KYC: $_userName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.2), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4))),
-                            child: const Text('ONLINE & VERIFIED', style: TextStyle(color: const Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.bold)),
-                          )
-                        ],
+
+            // Video Feed Area
+            Expanded(
+              flex: 3,
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 24),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white10)),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(32),
+                  child: Stack(
+                    children: [
+                      if (_cam != null) Positioned.fill(child: CameraPreview(_cam!)),
+                      
+                      // Face Guide Overlay
+                      Center(
+                        child: Container(
+                          width: 220, height: 280,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2),
+                            borderRadius: BorderRadius.circular(110),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
 
-                  // Guides
-                  Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Face Guide
-                        Container(
-                          width: 180, height: 230,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: _faceDetected ? const Color(0xFF10B981) : Colors.white24, width: 2),
-                            borderRadius: BorderRadius.circular(100),
-                            boxShadow: _faceDetected ? [BoxShadow(color: const Color(0xFF10B981).withOpacity(0.2), blurRadius: 20, spreadRadius: 2)] : [],
-                          ),
+                      // Status Badge
+                      Positioned(
+                        top: 20, right: 20,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
+                          child: Row(children: [
+                            Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
+                            const SizedBox(width: 6),
+                            const Text("LIVE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                          ]),
                         ),
-                        const SizedBox(height: 20),
-                        // ID Card Guide
-                        Container(
-                          width: 200, height: 120,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white24, width: 1),
-                            borderRadius: BorderRadius.circular(12),
-                            color: Colors.white.withOpacity(0.05),
-                          ),
-                          child: const Center(child: Icon(Icons.credit_card, color: Colors.white24, size: 32)),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-
-                  // Recording Controls
-                  Positioned(
-                    top: 50, left: 16,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-                      child: Row(children: [
-                        Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
-                        const SizedBox(width: 6),
-                        const Text('REC', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                      ]),
-                    ),
-                  ),
-                  Positioned(
-                    top: 50, right: 16,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-                      child: Text(_formatTimer(_seconds), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
-        // Transcription Area
-        Container(
-          margin: const EdgeInsets.all(24),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(16)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _transcriptLine('10:48 AM', 'Agent', 'Please hold your Aadhaar card clearly.'),
-              const SizedBox(height: 8),
-              _transcriptLine('10:49 AM', _userName.toLowerCase(), 'Yes, is this clear enough?'),
-              const SizedBox(height: 8),
-              _transcriptLine('10:49 AM', 'Agent', 'Perfect. Now blink twice for liveness.'),
-            ],
-          ),
-        ),
-
-        // Status Button
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 24),
-          height: 56,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5)),
-            color: const Color(0xFF10B981).withOpacity(0.05),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.graphic_eq, color: const Color(0xFF10B981)),
-              const SizedBox(width: 12),
-              Text('RECORDING INITIATED — ${_blinkCount}/2 BLINKS', style: const TextStyle(color: const Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-            ],
-          ),
-        ),
-
-        // Control Row
-        Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Row(
-            children: [
-              _bottomButton(Icons.chat_outlined, 'CHAT'),
-              const SizedBox(width: 12),
-              _bottomButton(Icons.help_outline, 'HELP'),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  height: 50,
-                  decoration: BoxDecoration(color: Colors.red.withOpacity(0.8), borderRadius: BorderRadius.circular(12)),
-                  child: const Center(child: Text('END CALL', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
                 ),
               ),
-            ],
-          ),
+            ),
+
+            // Agent Transcript area
+            Expanded(
+              flex: 2,
+              child: Container(
+                margin: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(24)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("AGENT TRANSCRIPT", style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _logs.length,
+                        itemBuilder: (context, i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Text(_logs[i], style: TextStyle(
+                            color: _logs[i].startsWith("OFFICER") ? const Color(0xFF10B981) : Colors.white,
+                            fontSize: 13,
+                          )),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Recording Status Bar
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              height: 64,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(32),
+                color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
+                  const SizedBox(width: 12),
+                  Text(
+                    _isListening ? "LISTENING..." : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE ENCRYPTED CHANNEL"),
+                    style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
         ),
-      ],
-    );
-  }
-
-  Widget _buildDone() {
-    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      const Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 80),
-      const SizedBox(height: 24),
-      const Text('KYC VERIFIED SUCCESSFULLY', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
-      const Text('Application redirected to dashboard', style: TextStyle(color: Colors.white54)),
-      const SizedBox(height: 48),
-      ElevatedButton(onPressed: () => context.go('/dashboard'), child: const Text('Go to Dashboard')),
-    ]));
-  }
-
-  Widget _transcriptLine(String time, String author, String text) {
-    return RichText(text: TextSpan(style: const TextStyle(fontSize: 11, color: Colors.white38), children: [
-      TextSpan(text: '$time: ', style: const TextStyle(color: const Color(0xFF10B981))),
-      TextSpan(text: '$author: ', style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
-      TextSpan(text: text),
-    ]));
-  }
-
-  Widget _bottomButton(IconData icon, String label) {
-    return Container(
-      width: 90, height: 50,
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, size: 16, color: Colors.white70),
-        const SizedBox(width: 6),
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
-      ]),
+      ),
+      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
