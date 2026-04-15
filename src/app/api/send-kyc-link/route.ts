@@ -51,9 +51,22 @@ export async function POST(req: Request) {
           'Authorization': `Basic ${Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64')}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
+    // Clean the phone number (remove any non-digit characters)
+    const cleanPhone = phone.replace(/\D/g, '')
+    // Use the cleaned phone number, ensuring it has the correct international format
+    const formattedTo = cleanPhone.startsWith('91') ? `whatsapp:+${cleanPhone}` : `whatsapp:+91${cleanPhone}`
+
+    const twilioResp = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: new URLSearchParams({
           From: twilioFrom,
-          To: `whatsapp:+91${phone}`,
+          To: formattedTo,
           Body: message,
         }),
       }
