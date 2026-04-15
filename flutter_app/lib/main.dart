@@ -35,9 +35,11 @@ class AppShell extends StatelessWidget {
     else if (location.startsWith('/documents')) index = 2; // Dummy
     else if (location.startsWith('/profile')) index = 3;   // Dummy
 
+    final isKyc = location.contains('/kyc/');
+
     return Scaffold(
       body: child,
-      bottomNavigationBar: BottomNavigationBar(
+      bottomNavigationBar: isKyc ? null : BottomNavigationBar(
         backgroundColor: const Color(0xFF0F172A),
         type: BottomNavigationBarType.fixed,
         selectedItemColor: const Color(0xFF10B981),
