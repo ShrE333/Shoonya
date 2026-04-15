@@ -33,7 +33,8 @@ export async function POST(req: Request) {
     // Send WhatsApp via Twilio
     const twilioSid = process.env.TWILIO_ACCOUNT_SID
     const twilioToken = process.env.TWILIO_AUTH_TOKEN
-    const twilioFrom = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886'
+    const rawTwilioFrom = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886'
+    const twilioFrom = rawTwilioFrom.startsWith('whatsapp:') ? rawTwilioFrom : `whatsapp:${rawTwilioFrom}`
 
     if (!twilioSid || !twilioToken || twilioSid === 'your_twilio_account_sid') {
        // Return a mock success if Twilio isn't properly configured yet to not crash the UI
