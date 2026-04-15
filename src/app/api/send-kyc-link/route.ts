@@ -30,14 +30,14 @@ export async function POST(req: Request) {
 
     if (dbError) throw dbError
 
-    // Send WhatsApp via Twilio
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN
-    const rawTwilioFrom = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886'
+    // Strictly clean and trim all credentials
+    const twilioSid = (process.env.TWILIO_ACCOUNT_SID || '').trim()
+    const twilioToken = (process.env.TWILIO_AUTH_TOKEN || '').trim()
+    const rawTwilioFrom = (process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886').trim()
     const twilioFrom = rawTwilioFrom.startsWith('whatsapp:') ? rawTwilioFrom : `whatsapp:${rawTwilioFrom}`
 
-    if (!twilioSid || !twilioToken || twilioSid === 'your_twilio_account_sid') {
-       // Return a mock success if Twilio isn't properly configured yet to not crash the UI
+    if (!twilioSid || !twilioToken || twilioSid === 'your_twilio_account_sid' || !twilioSid.startsWith('AC')) {
+       // Return a mock success if Twilio isn't properly configured yet
        console.log(`[MOCK WHATSAPP SENT to ${phone}]: ${kycLink}`)
        return NextResponse.json({ success: true, token, messageSid: 'mock_sid_for_testing' })
     }
