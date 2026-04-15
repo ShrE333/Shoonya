@@ -46,8 +46,19 @@ export async function POST(req: Request) {
 
     // Clean the phone number (remove any non-digit characters)
     const cleanPhone = phone.replace(/\D/g, '')
-    // Use the cleaned phone number, ensuring it has the correct international format
-    const formattedTo = cleanPhone.startsWith('91') ? `whatsapp:+${cleanPhone}` : `whatsapp:+91${cleanPhone}`
+    
+    // Formatting logic for Indian numbers:
+    // 1. If it's 10 digits, it's a raw mobile number, add +91
+    // 2. If it's 12 digits and starts with 91, it already has the country code
+    let formattedTo = ''
+    if (cleanPhone.length === 10) {
+      formattedTo = `whatsapp:+91${cleanPhone}`
+    } else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+      formattedTo = `whatsapp:+${cleanPhone}`
+    } else {
+      // Fallback for other formats
+      formattedTo = `whatsapp:+${cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone}`
+    }
 
     const twilioResp = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`,
