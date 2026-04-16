@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -23,23 +24,21 @@ class KYCVerificationScreen extends StatefulWidget {
 }
 
 class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
-  // Voice Agent State
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   bool _isSpeaking = false;
   bool _isListening = false;
-  int _currentStep = 0; // 0: Init, 1: Language...
+  int _currentStep = 0;
   String _lastRecordingPath = "";
+  List<int> _lastTtsBytes = [];
   
   String _selectedLanguage = "en-IN";
   String _agentText = "Initializing interview...";
   final List<Map<String, String>> _transcript = [];
 
-  // API Config
   final String sarvamApiKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
   final String groqApiKey = const String.fromEnvironment('GROQ_API_KEY');
 
-  // Camera
   CameraController? _cam;
 
   @override
@@ -49,7 +48,14 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   }
 
   Future<void> _initInterview() async {
+    print("DEBUG: Initializing Interview...");
     await [Permission.microphone, Permission.camera].request();
+    
+    // Configure Audio Session for Playback
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.speech());
+    await session.setActive(true);
+
     await _initCamera();
     _startFlow();
   }
@@ -70,8 +76,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     super.dispose();
   }
 
-  // --- BRAIN: THE FLOW CONTROL ---
-
   void _startFlow() async {
     await Future.delayed(const Duration(seconds: 2));
     _voicePrompt("Welcome to Shoonya. Please tell me which language you would like to continue in? English or Hindi?");
@@ -87,7 +91,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     });
 
     try {
-      debugPrint("TTS Request for: $text");
+      print("TTS Request for: $text");
       final response = await http.post(
         Uri.parse("https://api.sarvam.ai/text-to-speech"), 
         headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
@@ -99,18 +103,16 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         }),
       );
 
-      debugPrint("TTS Status: ${response.statusCode}");
+      print("TTS Status: ${response.statusCode}");
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final base64Audio = data['audios'][0];
-        final bytes = base64Decode(base64Audio);
-        debugPrint("Received ${bytes.length} audio bytes.");
+        _lastTtsBytes = base64Decode(base64Audio);
+        print("Received ${_lastTtsBytes.length} audio bytes.");
 
-        // Play directly from bytes (no file delay)
         await _player.setVolume(1.0);
-        await _player.play(BytesSource(bytes));
+        await _player.play(BytesSource(Uint8List.fromList(_lastTtsBytes)));
         
-        // Use a one-time listener to avoid duplicates
         StreamSubscription<void>? sub;
         sub = _player.onPlayerComplete.listen((event) {
           sub?.cancel();
@@ -120,12 +122,12 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           }
         });
       } else {
-        debugPrint("TTS ERROR BODY: ${response.body}");
+        print("TTS ERROR BODY: ${response.body}");
         setState(() => _isSpeaking = false);
         _startListening();
       }
     } catch (e) {
-      debugPrint("TTS EXCEPTION: $e");
+      print("TTS EXCEPTION: $e");
       setState(() => _isSpeaking = false);
       _startListening();
     }
@@ -137,13 +139,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       final path = p.join(tempDir.path, "user_res_${DateTime.now().millisecondsSinceEpoch}.wav");
       _lastRecordingPath = path;
       
-      await _recorder.start(
-        const RecordConfig(), 
-        path: path
-      );
+      await _recorder.start(const RecordConfig(), path: path);
       setState(() => _isListening = true);
       
-      // Auto-stop after 10 seconds
       Timer(const Duration(seconds: 10), () {
         if (_isListening) _processUserResponse(path);
       });
@@ -158,7 +156,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
     final file = File(path);
     if (await file.exists()) {
-      debugPrint("Audio captured! Size: ${await file.length()} bytes");
+      print("Audio captured! Size: ${await file.length()} bytes");
     }
 
     final transcript = await _stt(path);
@@ -169,40 +167,29 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Future<String> _stt(String audioPath) async {
     try {
-      debugPrint("STT Request for: $audioPath");
+      print("STT Request for: $audioPath");
       final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/speech-to-text"));
       request.headers["api-subscription-key"] = sarvamApiKey;
-      
       request.fields["model"] = "saaras:v3";
       request.fields["language_code"] = _currentStep <= 2 ? "unknown" : _selectedLanguage; 
-
-      request.files.add(await http.MultipartFile.fromPath(
-        "file", 
-        audioPath,
-        filename: "input.wav",
-      ));
+      request.files.add(await http.MultipartFile.fromPath("file", audioPath, filename: "input.wav"));
 
       final response = await request.send();
       final resBody = await response.stream.bytesToString();
-      debugPrint("STT RAW RESPONSE: $resBody");
+      print("STT RAW RESPONSE: $resBody");
       
       final data = jsonDecode(resBody);
       return data['transcript'] ?? "";
     } catch (e) { 
-      debugPrint("STT ERROR LOG: $e");
+      print("STT ERROR LOG: $e");
       return ""; 
     }
   }
 
   Future<void> _decideNextStep(String userText) async {
     setState(() => _agentText = "Processing...");
-
-    String prompt = "";
-    if (_currentStep == 1) {
-      prompt = "Detect if the user wants English or Hindi. Return ONLY the JSON: {'language': 'hi-IN' or 'en-IN', 'next_question': 'Thank you. Please tell me your full name.'}";
-    } else {
-      prompt = "You are verifying a loan interview answer. Question was Step $_currentStep. User said: '$userText'. Identify the next question. Next questions are: 3:Work details (Job/Business), 4:Salary, 5:Loan Type, 6:Amount, 7:Timeline, 8:Done. Return JSON: {'valid': true, 'data': 'extracted value', 'next_question': 'The next question text'}";
-    }
+    String prompt = "Verifying loan answer Step $_currentStep. User said: '$userText'. Next: 3:Work, 4:Salary, 5:LoanType, 6:Amount, 7:Timeline, 8:Done. Return JSON: {'valid': true, 'data': '...', 'next_question': '...'}";
+    if (_currentStep == 1) prompt = "Detect language. Return JSON: {'language': '...', 'next_question': '...'}";
 
     try {
       final response = await http.post(
@@ -256,7 +243,13 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Container(padding: const EdgeInsets.all(24), child: const Center(child: Text("AI LOAN INTERVIEW OFFICER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)))),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("AI LOAN OFFICER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                if (_lastTtsBytes.isNotEmpty) IconButton(onPressed: () => _player.play(BytesSource(Uint8List.fromList(_lastTtsBytes))), icon: const Icon(Icons.volume_up, color: Color(0xFF10B981))),
+              ],
+            )),
             Expanded(
               flex: 4,
               child: Container(
@@ -308,20 +301,13 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 24),
                   height: 70,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(35), 
-                    color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), 
-                    border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)
-                  ),
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(35), color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
                       const SizedBox(width: 12),
-                      Text(
-                        _isListening ? "LISTENING (TAP TO SUBMIT)" : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE LINE ACTIVE"), 
-                        style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)
-                      ),
+                      Text(_isListening ? "LISTENING (TAP TO SUBMIT)" : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE LINE ACTIVE"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
