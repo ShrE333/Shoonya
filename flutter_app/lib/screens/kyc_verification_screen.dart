@@ -134,7 +134,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       _lastRecordingPath = path;
       
       await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc), 
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ), 
         path: path
       );
       setState(() => _isListening = true);
@@ -176,7 +180,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       request.files.add(await http.MultipartFile.fromPath(
         "file", 
         audioPath,
-        contentType: MediaType("audio", "aac"),
+        contentType: MediaType("audio", "wav"),
       ));
 
       final response = await request.send();
@@ -297,19 +301,30 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                 ),
               ),
             ),
-            GestureDetector(
-              onTap: () { if (_isListening) _processUserResponse(_lastRecordingPath); },
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                height: 70,
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(35), color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
-                    const SizedBox(width: 12),
-                    Text(_isListening ? "LISTENING (TAP TO SUBMIT)" : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE LINE ACTIVE"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
-                  ],
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(35),
+                onTap: () { if (_isListening) _processUserResponse(_lastRecordingPath); },
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  height: 70,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(35), 
+                    color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), 
+                    border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
+                      const SizedBox(width: 12),
+                      Text(
+                        _isListening ? "LISTENING (TAP TO SUBMIT)" : (_isSpeaking ? "OFFICER SPEAKING..." : "SECURE LINE ACTIVE"), 
+                        style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
