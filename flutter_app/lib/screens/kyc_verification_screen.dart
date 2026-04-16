@@ -130,15 +130,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _startListening() async {
     if (await _recorder.hasPermission()) {
       final tempDir = await getTemporaryDirectory();
-      final path = p.join(tempDir.path, "user_res_${DateTime.now().millisecondsSinceEpoch}.m4a");
+      final path = p.join(tempDir.path, "user_res_${DateTime.now().millisecondsSinceEpoch}.wav");
       _lastRecordingPath = path;
       
       await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
-        ), 
+        const RecordConfig(), 
         path: path
       );
       setState(() => _isListening = true);
@@ -174,13 +170,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       request.headers["api-subscription-key"] = sarvamApiKey;
       
       request.fields["model"] = "saaras:v3";
-      request.fields["language_code"] = _currentStep <= 1 ? "unknown" : _selectedLanguage; 
-      request.fields["mode"] = "transcribe";
+      request.fields["language_code"] = _currentStep <= 2 ? "unknown" : _selectedLanguage; 
 
       request.files.add(await http.MultipartFile.fromPath(
         "file", 
         audioPath,
-        contentType: MediaType("audio", "wav"),
       ));
 
       final response = await request.send();
