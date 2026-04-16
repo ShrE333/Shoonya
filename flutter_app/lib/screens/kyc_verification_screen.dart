@@ -89,7 +89,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     try {
       debugPrint("TTS Request for: $text");
       final response = await http.post(
-        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"), 
+        Uri.parse("https://api.sarvam.ai/text-to-speech"), 
         headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
@@ -116,10 +116,12 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           }
         });
       } else {
+        debugPrint("TTS ERROR BODY: ${response.body}");
         setState(() => _isSpeaking = false);
         _startListening();
       }
     } catch (e) {
+      debugPrint("TTS EXCEPTION: $e");
       setState(() => _isSpeaking = false);
       _startListening();
     }
