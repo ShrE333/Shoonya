@@ -4,10 +4,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 
@@ -46,6 +49,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   }
 
   Future<void> _initInterview() async {
+    await [Permission.microphone, Permission.camera].request();
     await _initCamera();
     _startFlow();
   }
@@ -83,8 +87,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     });
 
     try {
+      debugPrint("TTS Request for: $text");
       final response = await http.post(
-        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"), // Added v1 as per latest Sarvam docs
+        Uri.parse("https://api.sarvam.ai/text-to-speech"), 
         headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
@@ -94,6 +99,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         }),
       );
 
+      debugPrint("TTS Status: ${response.statusCode}");
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final base64Audio = data['audios'][0];
@@ -124,7 +130,14 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     if (await _recorder.hasPermission()) {
       final tempDir = await getTemporaryDirectory();
       final path = p.join(tempDir.path, "user_res_${DateTime.now().millisecondsSinceEpoch}.wav");
-      await _recorder.start(const RecordConfig(encoder: AudioEncoder.wav), path: path);
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ), 
+        path: path
+      );
       setState(() => _isListening = true);
       // Listen for 5 seconds
       Timer(const Duration(seconds: 5), () => _processUserResponse(path));
@@ -147,17 +160,30 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Future<String> _stt(String audioPath) async {
     try {
-      final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/v1/speech-to-text"));
+      debugPrint("STT Request for: $audioPath");
+      final request = http.MultipartRequest("POST", Uri.parse("https://api.sarvam.ai/speech-to-text"));
       request.headers["api-subscription-key"] = sarvamApiKey;
+      
       request.fields["model"] = "saaras:v3";
-      request.fields["language_code"] = _currentStep == 1 ? "unknown" : _selectedLanguage; // Auto-detect for first step
-      request.files.add(await http.MultipartFile.fromPath("file", audioPath));
+      request.fields["language_code"] = _currentStep <= 1 ? "unknown" : _selectedLanguage; 
+      request.fields["mode"] = "transcribe";
+
+      request.files.add(await http.MultipartFile.fromPath(
+        "file", 
+        audioPath,
+        contentType: http.MediaType("audio", "wav"),
+      ));
 
       final response = await request.send();
       final resBody = await response.stream.bytesToString();
+      debugPrint("STT RAW RESPONSE: $resBody");
+      
       final data = jsonDecode(resBody);
       return data['transcript'] ?? "";
-    } catch (e) { return ""; }
+    } catch (e) { 
+      debugPrint("STT ERROR LOG: $e");
+      return ""; 
+    }
   }
 
   Future<void> _decideNextStep(String userText) async {
