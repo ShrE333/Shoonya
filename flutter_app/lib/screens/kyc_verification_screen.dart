@@ -106,8 +106,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         final bytes = base64Decode(base64Audio);
         final tempDir = await getTemporaryDirectory();
         final file = File(p.join(tempDir.path, "prompt_${DateTime.now().millisecondsSinceEpoch}.wav"));
-        await file.writeAsBytes(bytes);
+        await file.writeAsBytes(bytes, flush: true);
 
+        debugPrint("Playing TTS file: ${file.path}");
         await _player.play(DeviceFileSource(file.path));
         _player.onPlayerComplete.listen((event) {
           if (mounted) {
@@ -175,6 +176,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       request.files.add(await http.MultipartFile.fromPath(
         "file", 
         audioPath,
+        filename: "input.wav",
       ));
 
       final response = await request.send();
