@@ -194,7 +194,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     if (_currentStep == 1) {
       prompt = "Detect if the user wants English or Hindi. Return ONLY the JSON: {'language': 'hi-IN' or 'en-IN', 'next_question': 'Thank you. Please tell me your full name.'}";
     } else {
-      prompt = "You are verifying a loan interview answer. Question was Step $_currentStep. User said: '$userText'. If this answer is valid for the question, identify the next question. Next questions are: 3:Age/DOB, 4:Work, 5:Salary, 6:Loan Type, 7:Amount, 8:Timeline, 9:Done. Return JSON: {'valid': true, 'data': 'extracted value', 'next_question': 'The next question text'}";
+      prompt = "You are verifying a loan interview answer. Question was Step $_currentStep. User said: '$userText'. If this answer is valid for the question, identify the next question. Next questions are: 3:Work details (Job/Business), 4:Salary, 5:Loan Type, 6:Amount, 7:Timeline, 8:Done. Return JSON: {'valid': true, 'data': 'extracted value', 'next_question': 'The next question text'}";
     }
 
     try {
@@ -217,7 +217,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       } else {
         if (result['valid'] == true) {
           _currentStep++;
-          if (_currentStep >= 9) {
+          if (_currentStep >= 8) {
             _voicePrompt("Thank you for your time. Your loan application is now under review. Goodbye.");
             _saveToSupabase();
             Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
