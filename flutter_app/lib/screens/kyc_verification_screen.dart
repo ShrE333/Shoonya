@@ -104,13 +104,16 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         final data = jsonDecode(response.body);
         final base64Audio = data['audios'][0];
         final bytes = base64Decode(base64Audio);
-        final tempDir = await getTemporaryDirectory();
-        final file = File(p.join(tempDir.path, "prompt_${DateTime.now().millisecondsSinceEpoch}.wav"));
-        await file.writeAsBytes(bytes, flush: true);
+        debugPrint("Received ${bytes.length} audio bytes.");
 
-        debugPrint("Playing TTS file: ${file.path}");
-        await _player.play(DeviceFileSource(file.path));
-        _player.onPlayerComplete.listen((event) {
+        // Play directly from bytes (no file delay)
+        await _player.setVolume(1.0);
+        await _player.play(BytesSource(bytes));
+        
+        // Use a one-time listener to avoid duplicates
+        StreamSubscription<void>? sub;
+        sub = _player.onPlayerComplete.listen((event) {
+          sub?.cancel();
           if (mounted) {
             setState(() => _isSpeaking = false);
             _startListening();
