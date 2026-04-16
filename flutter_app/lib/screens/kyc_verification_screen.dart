@@ -95,7 +95,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           "text": text,
           "target_language_code": _selectedLanguage,
           "speaker": _selectedLanguage == "hi-IN" ? "ritu" : "shubh",
-          "model": "bulbul:v3",
+          "model": "bulbul:v2",
         }),
       );
 
