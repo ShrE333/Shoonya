@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen({super.key});
@@ -24,7 +25,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     final user = _supabase.auth.currentUser;
     if (user != null) {
       try {
-        // Looking for files in the user's directory
         final data = await _supabase.storage.from('documents').list(path: user.id);
         setState(() {
           _files = data;
@@ -112,14 +112,16 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
             onPressed: () async {
               try {
                 final String url = await _supabase.storage.from('documents').createSignedUrl(path, 600);
-                // Open the URL in the system browser/viewer
-                print("OPENING: $url");
-                // Note: user needs to approve url_launcher if it were package-based, 
-                // but for now we provide the signed link for session handling.
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Link generated! Securely opening..."), backgroundColor: Color(0xFF10B981)));
-                // Fallback for manual copy if needed or use Launcher
+                final Uri uri = Uri.parse(url);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                } else {
+                  throw 'Could not launch $url';
+                }
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not retrieve file."), backgroundColor: Colors.redAccent));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not open file in browser."), backgroundColor: Colors.redAccent));
+                }
               }
             },
           )
