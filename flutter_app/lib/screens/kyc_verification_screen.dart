@@ -243,7 +243,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       ),
     );
 
-    final dir = await getApplicationDocumentsDocumentsDirectory();
+    final dir = await getApplicationDocumentsDirectory();
     final file = File("${dir.path}/Loan_Report_${widget.token}.pdf");
     await file.writeAsBytes(await pdf.save()); // Note: Encoding/Encryption usually done via separate plugins or advanced PDF settings
     
