@@ -148,7 +148,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     
     await _cam!.startImageStream((CameraImage image) async {
       frameCount++;
-      if (frameCount % 5 != 0) return; 
+      if (frameCount % 10 != 0) return; // Balanced for stability
       
       final result = await _vision.yoloOnFrame(
         bytesList: image.planes.map((p) => p.bytes).toList(),
@@ -162,11 +162,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       if (mounted) {
         if (result.isNotEmpty) {
           setState(() => _yoloResults = result);
-          // Print EVERYTHING for debugging
-          print("--- AI VISION SCAN ---");
-          for (var r in result) {
-            print("DETECTED: ${r['tag']} at ${(r['box'][4]*100).toStringAsFixed(1)}% confidence");
-          }
           
           final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
           final found = result.any((r) => r['tag'] == targetLabel && r['box'][4] > 0.4);
@@ -196,8 +191,12 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _listen() async {
     if (!mounted || _isScanning) return;
     await _speech.stop();
+    await _player.stop(); // Ensure audio is dead
+    await Future.delayed(const Duration(milliseconds: 500)); // H/W Cool down
+
     setState(() { _isListening = true; _currentWords = ""; });
     await _speech.listen(onResult: (val) {
+      if (!mounted) return;
       setState(() => _currentWords = val.recognizedWords);
       if (val.finalResult) {
         setState(() => _isListening = false);
@@ -205,7 +204,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         _currentStep++;
         _nextStep();
       }
-    }, localeId: "en-IN");
+    }, localeId: "en-IN", listenMode: ListenMode.confirmation);
   }
 
   Future<void> _finish() async {
@@ -316,24 +315,27 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
               Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
           ),
-          Container(
-            height: 120, 
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-            decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(_isListening ? "SYSTEM LISTENING..." : "OFFICER ANALYZING", style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                const SizedBox(height: 8),
-                Text(
-                  _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
-                ),
-              ],
-            )
+          GestureDetector(
+            onTap: () { if (!_isSpeaking && !_isScanning && !_isListening) _listen(); },
+            child: Container(
+              height: 120, 
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(_isListening ? "SYSTEM LISTENING..." : (_isSpeaking ? "AI OFFICER SPEAKING" : "TAP TO SPEAK"), style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
+                  ),
+                ],
+              )
+            ),
           )
         ]))
       ])
