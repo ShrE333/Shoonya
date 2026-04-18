@@ -8,12 +8,9 @@ import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_session/audio_session.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:path/path.dart' as p;
 
 class KYCVerificationScreen extends StatefulWidget {
   final String token;
@@ -24,237 +21,203 @@ class KYCVerificationScreen extends StatefulWidget {
 }
 
 class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
-  // Voice Agent State
+  // Engines
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
+  CameraController? _cam;
+  
+  // State
   bool _isSpeaking = false;
   bool _isListening = false;
   int _currentStep = 0;
-  List<int> _lastTtsBytes = [];
+  List<int> _audioBytes = [];
   String _currentWords = "";
-  
-  String _selectedLanguage = "en-IN";
-  String _agentText = "Initializing interview...";
-  final List<Map<String, String>> _transcript = [];
+  String _agentText = "Starting Shoonya AI...";
+  String _selectedLang = "en-IN";
+  final List<Map<String, String>> _history = [];
 
-  // API Config
-  final String sarvamApiKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
-  final String groqApiKey = const String.fromEnvironment('GROQ_API_KEY');
-
-  // Camera
-  CameraController? _cam;
+  // API Config (Strictly bulbulv2 as requested)
+  final String sarvamKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
+  final String groqKey = const String.fromEnvironment('GROQ_API_KEY');
 
   @override
   void initState() {
     super.initState();
-    _initInterview();
+    _bootSystem();
   }
 
-  Future<void> _initInterview() async {
-    print("DEBUG: Initializing Interview...");
+  Future<void> _bootSystem() async {
+    print("BOOT: Requesting Permissions...");
     await [Permission.microphone, Permission.camera].request();
-    
-    // Proactive STT Init for stability
-    bool available = await _speech.initialize(
-      onStatus: (status) => print('STT Status: $status'),
-      onError: (error) => setState(() => _agentText = "Speech Error: ${error.errorMsg}"),
-      finalTimeout: const Duration(seconds: 10),
-    );
 
+    print("BOOT: Initializing Audio Session...");
     final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration.speech());
+    await session.configure(const AudioSessionConfiguration.music()); // High-quality speaker focus
     await session.setActive(true);
 
-    await _initCamera();
-    if (available) {
-      Timer(const Duration(milliseconds: 2000), () => _startFlow());
-    } else {
-      setState(() => _agentText = "Speech Engine Busy. Please try restarting.");
-    }
-  }
-
-  Future<void> _initCamera() async {
+    print("BOOT: Initializing Camera...");
     final cameras = await availableCameras();
-    final frontCam = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
-    _cam = CameraController(frontCam, ResolutionPreset.high, enableAudio: false);
+    final front = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
+    _cam = CameraController(front, ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
     if (mounted) setState(() {});
+
+    print("BOOT: Initializing Speech Engine...");
+    bool hasSTT = await _speech.initialize(
+      onStatus: (s) => print("STT_STATUS: $s"),
+      onError: (e) => print("STT_ERROR: $e"),
+    );
+
+    if (hasSTT) {
+      Timer(const Duration(seconds: 1), () => _runInterview());
+    } else {
+      setState(() => _agentText = "Speech Engine Error. Please check permissions.");
+    }
   }
 
   @override
   void dispose() {
-    try { _speech.cancel(); } catch (_) {}
+    _speech.cancel();
     _player.dispose();
     _cam?.dispose();
     super.dispose();
   }
 
-  // --- BRAIN: THE FLOW CONTROL ---
+  // --- INTERVIEW FLOW ---
 
-  void _startFlow() async {
-    await Future.delayed(const Duration(seconds: 1));
-    _voicePrompt("Welcome to Shoonya. To get started, please share which language you would like to continue in? English or Hindi?");
+  void _runInterview() {
     _currentStep = 1;
+    _promptAgent("Welcome to Shoonya. I'm your AI officer. Which language shall we use for today's loan interview? English or Hindi?");
   }
 
-  Future<void> _voicePrompt(String text) async {
+  Future<void> _promptAgent(String text) async {
     if (!mounted) return;
     setState(() {
       _agentText = text;
       _isSpeaking = true;
-      _transcript.add({"role": "officer", "text": text});
+      _history.add({"role": "officer", "text": text});
     });
 
     try {
-      print("TTS Request (Stable bulbul:v1) for: $text");
-      final response = await http.post(
-        Uri.parse("https://api.sarvam.ai/text-to-speech"), 
-        headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
+      print("TTS: Calling Sarvam (bulbulv2) for '$text'");
+      final res = await http.post(
+        Uri.parse("https://api.sarvam.ai/text-to-speech"),
+        headers: {"api-subscription-key": sarvamKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
-          "target_language_code": _selectedLanguage,
-          "speaker": _selectedLanguage == "hi-IN" ? "ritu" : "meera",
-          "model": "bulbul:v1", // Using v1 for maximum stability
+          "target_language_code": _selectedLang,
+          "speaker": _selectedLang == "hi-IN" ? "ritu" : "shubh",
+          "model": "bulbulv2" // STRICT: No colon as requested
         }),
       );
 
-      print("TTS Code: ${response.statusCode}");
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final base64Audio = data['audios'][0];
-        _lastTtsBytes = base64Decode(base64Audio);
-        print("Received ${_lastTtsBytes.length} bytes.");
+      if (res.statusCode == 200) {
+        final b64 = jsonDecode(res.body)['audios'][0];
+        _audioBytes = base64Decode(b64);
+        print("TTS: Audio Ready (${_audioBytes.length} bytes)");
 
-        await _player.setVolume(1.0);
-        await _player.play(BytesSource(Uint8List.fromList(_lastTtsBytes)));
+        await _player.play(BytesSource(Uint8List.fromList(_audioBytes)));
         
-        StreamSubscription<void>? sub;
-        sub = _player.onPlayerComplete.listen((event) {
-          sub?.cancel();
+        _player.onPlayerComplete.first.then((_) {
           if (mounted) {
             setState(() => _isSpeaking = false);
-            _startListening();
+            _listenUser();
           }
         });
       } else {
-        print("TTS ERROR RAW: ${response.body}");
+        print("TTS_ERROR: ${res.statusCode} -> ${res.body}");
         setState(() => _isSpeaking = false);
-        _startListening(); 
+        _listenUser(); // Fallback to listening even if silent
       }
     } catch (e) {
-      print("TTS EXCEPTION: $e");
+      print("TTS_EXCEPTION: $e");
       setState(() => _isSpeaking = false);
-      _startListening();
+      _listenUser();
     }
   }
 
-  Future<void> _startListening() async {
+  Future<void> _listenUser() async {
     if (_speech.isListening) return;
     
     setState(() {
       _isListening = true;
-      _currentWords = "I am listening...";
+      _currentWords = "";
     });
 
+    print("STT: Listening for result...");
     await _speech.listen(
-      onResult: (result) {
-        setState(() => _currentWords = result.recognizedWords);
-        if (result.finalResult) {
-          _onSpeechComplete(result.recognizedWords);
+      onResult: (val) {
+        setState(() => _currentWords = val.recognizedWords);
+        if (val.finalResult) {
+          print("STT: Final Result: ${val.recognizedWords}");
+          _handleUserResponse(val.recognizedWords);
         }
       },
-      localeId: _selectedLanguage,
-      listenFor: const Duration(seconds: 15),
-      pauseFor: const Duration(seconds: 4),
+      localeId: _selectedLang,
+      listenFor: const Duration(seconds: 10),
+      pauseFor: const Duration(seconds: 3),
     );
   }
 
-  void _onSpeechComplete(String recognizedText) {
+  void _handleUserResponse(String text) {
     if (!_isListening) return;
-    setState(() {
-      _isListening = false;
-      _currentWords = "";
-    });
+    setState(() => _isListening = false);
     
-    if (recognizedText.trim().isEmpty) {
-      _voicePrompt("I'm sorry, I didn't catch that. Could you please repeat yourself?");
+    if (text.trim().isEmpty) {
+      _promptAgent("I apologize, I didn't hear that. Could you say it again?");
       return;
     }
 
-    setState(() => _transcript.add({"role": "user", "text": recognizedText}));
-    _decideNextStep(recognizedText);
+    setState(() => _history.add({"role": "user", "text": text}));
+    _askBrain(text);
   }
 
-  Future<void> _decideNextStep(String userText) async {
-    if (!mounted) return;
-    setState(() => _agentText = "Processing...");
-
-    String systemPrompt = """
-    You are a professional banking officer. 
-    Current Interview Step: $_currentStep.
-    User input: '$userText'.
+  Future<void> _askBrain(String input) async {
+    setState(() => _agentText = "Verifying...");
     
-    Advance through:
-    1: Language Selection (hi-IN / en-IN)
-    2: Name
-    3: Employment Status
-    4: Monthly Salary
-    5: Loan Reason
-    6: Loan Amount
-    7: Repayment Timeline
-    8: Completion
-
-    Return ONLY JSON:
-    {
-      "valid": true,
-      "extracted_data": "value",
-      "next_question": "Full professional sentence",
-      "language": "hi-IN or en-IN" (Step 1 only)
-    }
-    """;
+    final sys = """You are a bank officer. Step: $_currentStep. 
+    1: Language, 2: Name, 3: Job, 4: Salary, 5: Reason, 6: Amount, 7: Duration, 8: Exit.
+    Return JSON ONLY: {"valid": true, "next_question": "Full sentence", "lang": "en-IN/hi-IN"}""";
 
     try {
-      final response = await http.post(
+      final res = await http.post(
         Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
-        headers: {"Authorization": "Bearer $groqApiKey", "Content-Type": "application/json"},
+        headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
         body: jsonEncode({
           "model": "llama-3.1-8b-instant",
           "response_format": {"type": "json_object"},
-          "messages": [{"role": "system", "content": systemPrompt}, {"role": "user", "content": userText}]
+          "messages": [{"role": "system", "content": sys}, {"role": "user", "content": input}]
         }),
       );
 
-      final result = jsonDecode(jsonDecode(response.body)['choices'][0]['message']['content']);
+      final data = jsonDecode(jsonDecode(res.body)['choices'][0]['message']['content']);
+      print("BRAIN: Decision -> $data");
 
       if (_currentStep == 1) {
-        _selectedLanguage = result['language'] ?? "en-IN";
-        _currentStep = 2;
-        _voicePrompt(result['next_question']);
-      } else {
-        if (result['valid'] == true) {
-          _currentStep++;
-          if (_currentStep >= 8) {
-            _voicePrompt("Thank you. I have all the details. Your loan application is now being processed. Have a great day!");
-            _saveToSupabase();
-            Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
-          } else {
-            _voicePrompt(result['next_question']);
-          }
+        _selectedLang = data['lang'] ?? "en-IN";
+      }
+
+      if (data['valid'] == true) {
+        _currentStep++;
+        if (_currentStep >= 8) {
+          _promptAgent("Thank you. Your loan request is recorded. Goodbye.");
+          _save();
+          Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
         } else {
-          _voicePrompt("I'm afraid I didn't get that specific information. Could you please tell me again?");
+          _promptAgent(data['next_question']);
         }
+      } else {
+        _promptAgent("Could you please specify that detail clearly?");
       }
     } catch (e) {
-      _voicePrompt("I had a minor technical glitch. Let's continue. Can you say that again?");
+       _promptAgent("Minor connection issue. Let's try that again?");
     }
   }
 
-  Future<void> _saveToSupabase() async {
-    final supabase = Supabase.instance.client;
-    await supabase.from('kyc').update({
+  Future<void> _save() async {
+    await Supabase.instance.client.from('kyc').update({
       'status': 'completed',
-      'interview_transcript': jsonEncode(_transcript),
-      'completed_at': DateTime.now().toIso8601String(),
+      'interview_transcript': jsonEncode(_history),
     }).eq('kyc_link', widget.token);
   }
 
@@ -262,83 +225,35 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Container(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("AI LOAN OFFICERV2", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
-                if (_lastTtsBytes.isNotEmpty) IconButton(onPressed: () => _player.play(BytesSource(Uint8List.fromList(_lastTtsBytes))), icon: const Icon(Icons.volume_up, color: Color(0xFF10B981))),
-              ],
-            )),
-            Expanded(
-              flex: 4,
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Stack(
-                    children: [
-                      if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-                      Center(child: Container(width: 200, height: 260, decoration: BoxDecoration(border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2), borderRadius: BorderRadius.circular(100)))),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 3,
-              child: Container(
-                margin: const EdgeInsets.all(24),
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(24)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("ACTIVE TRANSCRIPT", style: const TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: _transcript.length,
-                        itemBuilder: (context, i) {
-                          final msg = _transcript[i];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: Text("${msg['role']!.toUpperCase()}: ${msg['text']}", style: TextStyle(color: msg['role'] == 'officer' ? const Color(0xFF10B981) : Colors.white70, fontSize: 13)),
-                          );
-                        },
-                      ),
-                    ),
-                    if (_isListening)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: Text("HEARING: $_currentWords", style: const TextStyle(color: Color(0xFF10B981), fontSize: 13, fontStyle: FontStyle.italic)),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            GestureDetector(
-              onTap: () { if (!_isSpeaking && !_isListening) _startListening(); },
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                height: 70,
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(35), color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10)),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                     Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
-                    const SizedBox(width: 12),
-                    Text(_isListening ? "I AM LISTENING..." : (_isSpeaking ? "AGENT IS SPEAKING..." : "TAP TO MANUALLY START"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
+      body: Column(
+        children: [
+          Expanded(flex: 5, child: Stack(children: [
+            if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
+            Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black54, Colors.transparent, Colors.black87]))),
+            Positioned(top: 50, left: 24, child: Text("AI LOAN OFFICER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 2))),
+            Center(child: Container(width: 220, height: 280, decoration: BoxDecoration(border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2), borderRadius: BorderRadius.circular(110)))),
+          ])),
+          Expanded(flex: 4, child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
+            child: Column(children: [
+              Text(_agentText, textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w500)),
+              const Spacer(),
+              if (_currentWords.isNotEmpty) Text("YOU SAID: $_currentWords", style: TextStyle(color: const Color(0xFF10B981), fontSize: 14, fontStyle: FontStyle.italic)),
+              const Spacer(),
+              Container(
+                height: 80,
+                width: double.infinity,
+                decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(40), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
+                  const SizedBox(width: 12),
+                  Text(_isListening ? "LISTENING..." : (_isSpeaking ? "OFFICER SPEAKING..." : "READY"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
+                ]),
+              )
+            ]),
+          ))
+        ],
       ),
     );
   }
