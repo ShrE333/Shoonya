@@ -97,7 +97,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(file.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), overflow: TextOverflow.ellipsis),
-                Text(DateFormat('dd MMM yyyy').format(file.createdAt ?? DateTime.now()), style: const TextStyle(color: Colors.white24, fontSize: 11)),
+                Text(DateFormat('dd MMM yyyy').format(DateTime.tryParse(file.createdAt ?? '') ?? DateTime.now()), style: const TextStyle(color: Colors.white24, fontSize: 11)),
               ],
             ),
           ),

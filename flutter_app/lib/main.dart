@@ -8,6 +8,8 @@ import 'screens/dashboard_screen.dart';
 import 'screens/kyc_verification_screen.dart';
 import 'screens/apply_loan_screen.dart';
 import 'screens/chat_screen.dart';
+import 'screens/documents_screen.dart';
+import 'screens/profile_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,9 +21,6 @@ Future<void> main() async {
 
   runApp(const MyApp());
 }
-
-import 'screens/documents_screen.dart';
-import 'screens/profile_screen.dart';
 
 // Shell Screen to provide persistent navigation
 class AppShell extends StatelessWidget {
