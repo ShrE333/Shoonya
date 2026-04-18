@@ -28,11 +28,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   bool _isSpeaking = false;
   bool _isListening = false;
   int _currentStep = 0;
-  String _agentText = "Starting Shoonya AI...";
+  String _agentText = "Booting Officer AI...";
   String _selectedLang = "en-IN";
   String _currentWords = "";
   final List<Map<String, String>> _history = [];
-  String _errorMsg = "";
+  String _statusMsg = "";
 
   // API Config
   final String sarvamKey = "sk_di434scs_TtfMyRDXmfeNRWoTHnFTnWvK";
@@ -41,10 +41,10 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   @override
   void initState() {
     super.initState();
-    _boot();
+    _start();
   }
 
-  Future<void> _boot() async {
+  Future<void> _start() async {
     try {
       await [Permission.microphone, Permission.camera].request();
       
@@ -54,23 +54,19 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
       final cameras = await availableCameras();
       final front = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
-      _cam = CameraController(front, ResolutionPreset.medium, enableAudio: false);
+      _cam = CameraController(front, ResolutionPreset.low, enableAudio: false);
       await _cam!.initialize();
-      
       if (mounted) setState(() {});
 
-      bool hasSTT = await _speech.initialize(
-        onStatus: (s) => print("STT: $s"),
-        onError: (e) => setState(() => _errorMsg = "STT Error: ${e.errorMsg}"),
-      );
+      bool ok = await _speech.initialize(onStatus: (s) => print("STT: $s"), onError: (e) => print("STT ERR: $e"));
 
-      if (hasSTT) {
-        Timer(const Duration(seconds: 2), () => _run());
+      if (ok) {
+        Timer(const Duration(seconds: 2), () => _interviewStep());
       } else {
-        setState(() => _errorMsg = "Speech Engine Busy.");
+        setState(() => _statusMsg = "STT Initialization Failed");
       }
     } catch (e) {
-      setState(() => _errorMsg = "Boot failed: $e");
+      setState(() => _statusMsg = "Hardware Error: $e");
     }
   }
 
@@ -82,105 +78,100 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     super.dispose();
   }
 
-  void _run() {
+  void _interviewStep() {
     _currentStep = 1;
-    _talk("Welcome to Shoonya. I'm your AI bank officer. Which language shall we use for today's interview? English or Hindi?");
+    _communicate("Welcome to Shoonya. To proceed, please select your language. English or Hindi?");
   }
 
-  Future<void> _talk(String text) async {
+  Future<void> _communicate(String text) async {
     if (!mounted) return;
     setState(() {
       _agentText = text;
       _isSpeaking = true;
       _history.add({"role": "officer", "text": text});
-      _errorMsg = "";
     });
 
     try {
-      print("TTS: Calling Sarvam (bulbulv1 + meera)...");
+      print("TTS: Sending to Sarvam...");
+      // Using bulbul:v1 (The specific naming required for v1 API)
       final res = await http.post(
-        Uri.parse("https://api.sarvam.ai/text-to-speech"),
+        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"),
         headers: {"api-subscription-key": sarvamKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
           "target_language_code": _selectedLang,
-          "speaker": _selectedLang == "hi-IN" ? "ritu" : "meera", // Meera is the most stable English voice
-          "model": "bulbulv1" 
+          "speaker": _selectedLang == "hi-IN" ? "ritu" : "meera",
+          "model": "bulbul:v1" 
         }),
       );
 
+      print("TTS Response: ${res.statusCode}");
       if (res.statusCode == 200) {
         final b64 = jsonDecode(res.body)['audios'][0];
         final bytes = base64Decode(b64);
-        
-        await _player.setVolume(1.0);
         await _player.play(BytesSource(Uint8List.fromList(bytes)));
-        
         _player.onPlayerComplete.first.then((_) {
           if (mounted) {
             setState(() => _isSpeaking = false);
-            _listen();
+            _listenMic();
           }
         });
       } else {
-        setState(() => _errorMsg = "Voice Server Error: ${res.statusCode}");
-        print("SARVAM_ERR: ${res.body}");
+        setState(() => _statusMsg = "Voice Error ${res.statusCode}: Check Key/Model");
+        print("SARVAM ERROR BODY: ${res.body}");
         setState(() => _isSpeaking = false);
-        _listen();
+        _listenMic();
       }
     } catch (e) {
-      setState(() => _errorMsg = "Connection Error");
+      setState(() => _statusMsg = "Connection Timeout");
       setState(() => _isSpeaking = false);
-      _listen();
+      _listenMic();
     }
   }
 
-  Future<void> _listen() async {
+  Future<void> _listenMic() async {
     if (!mounted) return;
-    // Hard reset of microphone state
     await _speech.stop();
-    await Future.delayed(const Duration(milliseconds: 200));
+    await Future.delayed(const Duration(milliseconds: 300));
 
     setState(() {
       _isListening = true;
-      _currentWords = "I'm listening...";
+      _currentWords = "";
     });
 
     await _speech.listen(
       onResult: (val) {
         setState(() => _currentWords = val.recognizedWords);
         if (val.finalResult) {
-          _done(val.recognizedWords);
+          _onHeard(val.recognizedWords);
         }
       },
       localeId: _selectedLang,
-      listenFor: const Duration(seconds: 8),
+      listenFor: const Duration(seconds: 10),
       pauseFor: const Duration(seconds: 4),
     );
   }
 
-  void _done(String text) {
+  void _onHeard(String text) {
     if (!_isListening) return;
-    setState(() {
-      _isListening = false;
-    });
+    setState(() => _isListening = false);
     
     if (text.trim().isEmpty) {
-      _talk("I'm sorry, I missed that. Could you repeat?");
+      _communicate("I'm sorry, I didn't catch that. Could you repeat?");
       return;
     }
 
     setState(() => _history.add({"role": "user", "text": text}));
-    _brain(text);
+    _processBrain(text);
   }
 
-  Future<void> _brain(String input) async {
+  Future<void> _processBrain(String input) async {
     if (!mounted) return;
-    setState(() => _agentText = "Checking...");
+    setState(() => _agentText = "Processing...");
     
-    final prompt = """You are a bank manager. Step: $_currentStep. 
-    1: Language, 2: Name, 3: Job, 4: Salary, 5: Reason, 6: Amount, 7: Duration, 8: Exit.
-    JSON: {"valid": true, "next": "Sentence", "lang": "en-IN"}""";
+    final prompt = """Bank Officer role. Step: $_currentStep. 
+    Steps: 1:Lang, 2:Name, 3:Job, 4:Salary, 5:Reason, 6:Amount, 7:Time, 8:Done.
+    Return JSON ONLY: {"valid": true, "next": "Polite question", "lang": "en-IN"}""";
 
     try {
       final res = await http.post(
@@ -200,21 +191,21 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       if (data['valid'] == true) {
         _currentStep++;
         if (_currentStep >= 8) {
-          _talk("Your application is submitted. Thank you!");
-          _save();
+          _communicate("Thank you. Your loan application is now complete. You can exit now.");
+          _saveData();
           Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
         } else {
-          _talk(data['next']);
+          _communicate(data['next']);
         }
       } else {
-        _talk("Please specify that again?");
+        _communicate("Could you please provide that information again?");
       }
     } catch (e) {
-       _talk("System glitch. What was that?");
+       _communicate("Technical error. Let's try once more.");
     }
   }
 
-  Future<void> _save() async {
+  Future<void> _saveData() async {
     await Supabase.instance.client.from('kyc').update({
       'status': 'completed',
       'interview_transcript': jsonEncode(_history),
@@ -224,59 +215,50 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF020617),
+      backgroundColor: const Color(0xFF0F172A),
       body: Stack(
         children: [
-          // Background Camera
           if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-          // Overlay UI
-          Positioned.fill(child: Container(color: Colors.black.withOpacity(0.4))),
+          Positioned.fill(child: Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black54, Colors.transparent, Colors.black87])))),
           
           SafeArea(
             child: Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.security, color: Color(0xFF10B981)),
-                      const SizedBox(width: 12),
-                      const Text("SECURE AI INTERVIEW", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                    ],
-                  ),
+                  child: Row(children: [
+                    const Icon(Icons.verified_user, color: Color(0xFF10B981)),
+                    const SizedBox(width: 8),
+                    const Text("SHOONYA AI KYC", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1, fontSize: 12)),
+                  ]),
                 ),
                 const Spacer(),
                 
-                // Agent Bubble
+                if (_statusMsg.isNotEmpty) Container(margin: const EdgeInsets.symmetric(horizontal: 24), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.red.withOpacity(0.8), borderRadius: BorderRadius.circular(16)), child: Text(_statusMsg, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
+                
                 Container(
                   margin: const EdgeInsets.all(24),
                   padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white10)),
-                  child: Column(
-                    children: [
-                      if (_errorMsg.isNotEmpty) Container(padding: const EdgeInsets.all(8), margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.red.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Text(_errorMsg, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
-                      Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w600, height: 1.4)),
-                    ],
-                  ),
+                  decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.95), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white10)),
+                  child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600, height: 1.4)),
                 ),
 
-                // Status Bar
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-                  decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: const BorderRadius.vertical(top: Radius.circular(40))),
+                  padding: const EdgeInsets.fromLTRB(24, 40, 24, 40),
+                  decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))),
                   child: Column(
                     children: [
-                      if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 20), child: Text( _currentWords, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF10B981), fontSize: 16, fontWeight: FontWeight.w500))),
+                      if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text("HEARING: $_currentWords", textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF10B981), fontSize: 15, fontWeight: FontWeight.bold))),
                       Container(
-                        height: 80,
+                        height: 70,
                         width: double.infinity,
-                        decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(40), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2)),
+                        decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(35), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10, width: 2)),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                             Icon(_isListening ? Icons.mic : Icons.speaker_phone, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
-                            const SizedBox(width: 16),
-                            Text(_isListening ? "I AM LISTENING..." : (_isSpeaking ? "OFFICER IS SPEAKING..." : "SYSTEM READY"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold, fontSize: 16)),
+                             Icon(_isListening ? Icons.mic : Icons.voice_over_off, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
+                            const SizedBox(width: 12),
+                            Text(_isListening ? "LISTENING..." : (_isSpeaking ? "AI IS SPEAKING..." : "READY"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
