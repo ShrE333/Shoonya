@@ -238,6 +238,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
       // 2. Groq Analysis
       print("AI: Running risk analysis...");
+      final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
+      final prompt = """Analyze and return LOAN JSON: $transcriptText. JSON: {"status":"Approved","loan_amount":500000,"type":"Personal","risk":"Low"}""";
+      
       Map<String, dynamic> analysis = {"status":"pending","loan_amount":25000,"type":"Personal","risk":"Manual Review"};
       
       try {
