@@ -148,27 +148,31 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     
     await _cam!.startImageStream((CameraImage image) async {
       frameCount++;
-      if (frameCount % 10 != 0) return; // Process every 10th frame for speed
+      if (frameCount % 3 != 0) return; // Process every 3rd frame (Faster!)
       
       final result = await _vision.yoloOnFrame(
         bytesList: image.planes.map((p) => p.bytes).toList(),
         imageHeight: image.height,
         imageWidth: image.width,
         iouThreshold: 0.4,
-        confThreshold: 0.7,
-        classThreshold: 0.7,
+        confThreshold: 0.5, // Sensitive
+        classThreshold: 0.5,
       );
 
-      if (result.isNotEmpty && mounted) {
-        setState(() => _yoloResults = result);
-        
-        // Auto-Capture logic based on labels
-        final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
-        final found = result.any((r) => r['tag'] == targetLabel);
-        
-        if (found) {
-          _cam!.stopImageStream();
-          _autoCapture();
+      if (mounted) {
+        if (result.isNotEmpty) {
+          setState(() => _yoloResults = result);
+          print("AI SEES: ${result.map((r) => "${r['tag']} (${(r['box'][4]*100).toStringAsFixed(0)}%)").join(", ")}");
+          
+          final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
+          final found = result.any((r) => r['tag'] == targetLabel && r['box'][4] > 0.5);
+          
+          if (found) {
+            _cam!.stopImageStream();
+            _autoCapture();
+          }
+        } else {
+          setState(() => _yoloResults = []);
         }
       }
     });
