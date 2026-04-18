@@ -47,7 +47,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _start() async {
     try {
       await [Permission.microphone, Permission.camera].request();
-      
       final session = await AudioSession.instance;
       await session.configure(const AudioSessionConfiguration.speech());
       await session.setActive(true);
@@ -58,12 +57,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       await _cam!.initialize();
       if (mounted) setState(() {});
 
-      bool ok = await _speech.initialize(onStatus: (s) => print("STT: $s"), onError: (e) => print("STT ERR: $e"));
-
+      bool ok = await _speech.initialize();
       if (ok) {
         Timer(const Duration(seconds: 2), () => _interviewStep());
       } else {
-        setState(() => _statusMsg = "STT Initialization Failed");
+        setState(() => _statusMsg = "STT Init Failed");
       }
     } catch (e) {
       setState(() => _statusMsg = "Hardware Error: $e");
@@ -91,39 +89,46 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       _history.add({"role": "officer", "text": text});
     });
 
-    try {
-      print("TTS: Sending to Sarvam...");
-      // Using bulbul:v1 (The specific naming required for v1 API)
-      final res = await http.post(
-        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"),
-        headers: {"api-subscription-key": sarvamKey, "Content-Type": "application/json"},
-        body: jsonEncode({
-          "text": text,
-          "target_language_code": _selectedLang,
-          "speaker": _selectedLang == "hi-IN" ? "ritu" : "meera",
-          "model": "bulbul:v1" 
-        }),
-      );
+    // Try multiple models to ensure one works
+    List<String> models = ["bulbul:v1", "bulbulv1", "bulbul:v2", "bulbulv2"];
+    bool success = false;
 
-      print("TTS Response: ${res.statusCode}");
-      if (res.statusCode == 200) {
-        final b64 = jsonDecode(res.body)['audios'][0];
-        final bytes = base64Decode(b64);
-        await _player.play(BytesSource(Uint8List.fromList(bytes)));
-        _player.onPlayerComplete.first.then((_) {
-          if (mounted) {
-            setState(() => _isSpeaking = false);
-            _listenMic();
-          }
-        });
-      } else {
-        setState(() => _statusMsg = "Voice Error ${res.statusCode}: Check Key/Model");
-        print("SARVAM ERROR BODY: ${res.body}");
-        setState(() => _isSpeaking = false);
-        _listenMic();
+    for (String model in models) {
+      try {
+        print("TTS: Trying model $model...");
+        final res = await http.post(
+          Uri.parse("https://api.sarvam.ai/text-to-speech"),
+          headers: {"api-subscription-key": sarvamKey, "Content-Type": "application/json"},
+          body: jsonEncode({
+            "text": text,
+            "target_language_code": _selectedLang,
+            "speaker": _selectedLang == "hi-IN" ? "ritu" : "meera",
+            "model": model
+          }),
+        );
+
+        if (res.statusCode == 200) {
+          final b64 = jsonDecode(res.body)['audios'][0];
+          await _player.play(BytesSource(base64Decode(b64)));
+          success = true;
+          break; // Success!
+        } else {
+           print("TTS: Model $model failed with ${res.statusCode}");
+        }
+      } catch (e) {
+        print("TTS: Error with $model: $e");
       }
-    } catch (e) {
-      setState(() => _statusMsg = "Connection Timeout");
+    }
+
+    if (success) {
+      _player.onPlayerComplete.first.then((_) {
+        if (mounted) {
+          setState(() => _isSpeaking = false);
+          _listenMic();
+        }
+      });
+    } else {
+      setState(() => _statusMsg = "Critical Voice Error (Check API Key)");
       setState(() => _isSpeaking = false);
       _listenMic();
     }
@@ -133,18 +138,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     if (!mounted) return;
     await _speech.stop();
     await Future.delayed(const Duration(milliseconds: 300));
-
-    setState(() {
-      _isListening = true;
-      _currentWords = "";
-    });
-
+    setState(() { _isListening = true; _currentWords = ""; });
     await _speech.listen(
       onResult: (val) {
         setState(() => _currentWords = val.recognizedWords);
-        if (val.finalResult) {
-          _onHeard(val.recognizedWords);
-        }
+        if (val.finalResult) _onHeard(val.recognizedWords);
       },
       localeId: _selectedLang,
       listenFor: const Duration(seconds: 10),
@@ -155,12 +153,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   void _onHeard(String text) {
     if (!_isListening) return;
     setState(() => _isListening = false);
-    
-    if (text.trim().isEmpty) {
-      _communicate("I'm sorry, I didn't catch that. Could you repeat?");
-      return;
-    }
-
+    if (text.trim().isEmpty) { _communicate("I missed that. Repeat please?"); return; }
     setState(() => _history.add({"role": "user", "text": text}));
     _processBrain(text);
   }
@@ -168,11 +161,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _processBrain(String input) async {
     if (!mounted) return;
     setState(() => _agentText = "Processing...");
-    
-    final prompt = """Bank Officer role. Step: $_currentStep. 
-    Steps: 1:Lang, 2:Name, 3:Job, 4:Salary, 5:Reason, 6:Amount, 7:Time, 8:Done.
-    Return JSON ONLY: {"valid": true, "next": "Polite question", "lang": "en-IN"}""";
-
     try {
       final res = await http.post(
         Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
@@ -180,32 +168,27 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         body: jsonEncode({
           "model": "llama-3.1-8b-instant",
           "response_format": {"type": "json_object"},
-          "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": input}]
+          "messages": [{"role": "system", "content": "Bank KYC Step: $_currentStep. JSON ONLY: {'valid':true,'next':'question','lang':'en-IN'}"}, {"role": "user", "content": input}]
         }),
       );
-
       final data = jsonDecode(jsonDecode(res.body)['choices'][0]['message']['content']);
-
       if (_currentStep == 1) _selectedLang = data['lang'] ?? "en-IN";
-
       if (data['valid'] == true) {
         _currentStep++;
         if (_currentStep >= 8) {
-          _communicate("Thank you. Your loan application is now complete. You can exit now.");
-          _saveData();
+          _communicate("Interview complete. Thank you!");
+          _save();
           Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
         } else {
           _communicate(data['next']);
         }
       } else {
-        _communicate("Could you please provide that information again?");
+        _communicate("Repeat please?");
       }
-    } catch (e) {
-       _communicate("Technical error. Let's try once more.");
-    }
+    } catch (e) { _communicate("Error. Again?"); }
   }
 
-  Future<void> _saveData() async {
+  Future<void> _save() async {
     await Supabase.instance.client.from('kyc').update({
       'status': 'completed',
       'interview_transcript': jsonEncode(_history),
@@ -219,55 +202,17 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       body: Stack(
         children: [
           if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-          Positioned.fill(child: Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black54, Colors.transparent, Colors.black87])))),
-          
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Row(children: [
-                    const Icon(Icons.verified_user, color: Color(0xFF10B981)),
-                    const SizedBox(width: 8),
-                    const Text("SHOONYA AI KYC", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1, fontSize: 12)),
-                  ]),
-                ),
-                const Spacer(),
-                
-                if (_statusMsg.isNotEmpty) Container(margin: const EdgeInsets.symmetric(horizontal: 24), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.red.withOpacity(0.8), borderRadius: BorderRadius.circular(16)), child: Text(_statusMsg, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
-                
-                Container(
-                  margin: const EdgeInsets.all(24),
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.95), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white10)),
-                  child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600, height: 1.4)),
-                ),
-
-                Container(
-                  padding: const EdgeInsets.fromLTRB(24, 40, 24, 40),
-                  decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))),
-                  child: Column(
-                    children: [
-                      if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text("HEARING: $_currentWords", textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF10B981), fontSize: 15, fontWeight: FontWeight.bold))),
-                      Container(
-                        height: 70,
-                        width: double.infinity,
-                        decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(35), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10, width: 2)),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                             Icon(_isListening ? Icons.mic : Icons.voice_over_off, color: _isListening ? const Color(0xFF10B981) : Colors.white54),
-                            const SizedBox(width: 12),
-                            Text(_isListening ? "LISTENING..." : (_isSpeaking ? "AI IS SPEAKING..." : "READY"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+          Positioned.fill(child: Container(color: Colors.black45)),
+          SafeArea(child: Column(children: [
+            Padding(padding: const EdgeInsets.all(24), child: Row(children: [const Icon(Icons.verified, color: Color(0xFF10B981)), const SizedBox(width: 8), const Text("AI KYC", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))])),
+            const Spacer(),
+            if (_statusMsg.isNotEmpty) Container(margin: const EdgeInsets.all(20), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)), child: Text(_statusMsg, style: const TextStyle(color: Colors.white, fontSize: 12))),
+            Container(margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(28)), child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600))),
+            Container(padding: const EdgeInsets.all(24), decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), child: Column(children: [
+              if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text("HEARING: $_currentWords", style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold))),
+              Container(height: 70, width: double.infinity, decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(35), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(_isListening ? Icons.mic : Icons.voice_over_off, color: _isListening ? const Color(0xFF10B981) : Colors.white54), const SizedBox(width: 12), Text(_isListening ? "LISTENING..." : "READY", style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold))]))
+            ]))
+          ]))
         ],
       ),
     );
