@@ -60,11 +60,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
               )
             ],
           ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/apply'),
-        backgroundColor: const Color(0xFF10B981),
-        icon: const Icon(Icons.add_shopping_cart, color: Colors.black),
-        label: const Text("APPLY LOAN", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: FloatingActionButton(
+          onPressed: () => context.push('/apply'),
+          backgroundColor: const Color(0xFF10B981),
+          elevation: 10,
+          shadowColor: const Color(0xFF10B981).withOpacity(0.5),
+          child: const Icon(Icons.add, color: Colors.black, size: 32),
+        ),
+      ),
+      bottomNavigationBar: _buildBottomAppBar(context),
+    );
+  }
+
+  Widget _buildBottomAppBar(BuildContext context) {
+    return BottomAppBar(
+      color: const Color(0xFF0F172A),
+      notchMargin: 8,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          IconButton(icon: const Icon(Icons.grid_view_rounded, color: Color(0xFF10B981)), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.support_agent_rounded, color: Colors.white38), onPressed: () => context.push('/chat')),
+          const SizedBox(width: 40), // Space for FAB
+          IconButton(icon: const Icon(Icons.folder_shared_outlined, color: Colors.white38), onPressed: () => context.go('/documents')),
+          IconButton(icon: const Icon(Icons.person_pin_outlined, color: Colors.white38), onPressed: () => context.go('/profile')),
+        ],
       ),
     );
   }

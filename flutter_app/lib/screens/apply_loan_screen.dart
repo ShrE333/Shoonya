@@ -17,10 +17,27 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
 
+  bool _hasPendingLoan = false;
+
   @override
   void initState() {
     super.initState();
     _fetchLimit();
+    _checkExistingLoans();
+  }
+
+  Future<void> _checkExistingLoans() async {
+    final user = _supabase.auth.currentUser;
+    if (user != null) {
+      final loans = await _supabase.from('loans')
+          .select()
+          .eq('user_id', user.id)
+          .or('status.eq.pending,status.eq.under_review');
+      
+      if (loans.isNotEmpty) {
+        setState(() => _hasPendingLoan = true);
+      }
+    }
   }
 
   Future<void> _fetchLimit() async {
@@ -36,9 +53,15 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
   }
 
   Future<void> _submit() async {
-    setState(() => _isSaving = true);
     final user = _supabase.auth.currentUser;
     if (user != null) {
+      final profile = await _supabase.from('profiles').select().eq('id', user.id).single();
+      if (profile['kyc_status'] != 'verified') {
+        if (mounted) context.go('/kyc/demo');
+        return;
+      }
+      
+      setState(() => _isSaving = true);
       await _supabase.from('loans').insert({
         'user_id': user.id,
         'amount_requested': _amountRequested,
@@ -61,7 +84,25 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())
-        : SingleChildScrollView(
+        : _hasPendingLoan
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(40),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.pending_actions, color: Color(0xFFF59E0B), size: 64),
+                    const SizedBox(height: 24),
+                    const Text("APPLICATION IN PROGRESS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 12),
+                    const Text("You already have a loan request under review. Please wait for admin approval before applying for a new one.", textAlign: TextAlign.center, style: TextStyle(color: Colors.white38, fontSize: 13)),
+                    const SizedBox(height: 32),
+                    ElevatedButton(onPressed: () => context.go('/dashboard'), child: const Text("GO TO HUB")),
+                  ],
+                ),
+              ),
+            )
+          : SingleChildScrollView(
             padding: const EdgeInsets.all(32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
