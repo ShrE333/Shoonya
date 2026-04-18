@@ -219,17 +219,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       // Shutdown Vision to save battery/resources
       await _vision.closeYoloModel();
       
-      // 1. Upload Images to Vault
-      print("SYNC: Uploading documents to vault...");
-      if (_aadhaarPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/aadhaar.jpg', File(_aadhaarPath!), fileOptions: const FileOptions(upsert: true));
-      if (_panPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/pan.jpg', File(_panPath!), fileOptions: const FileOptions(upsert: true));
+      // 1. Upload Images to Vault (Parallel & Independent)
+      print("SYNC: Vaulting documents...");
+      Future<void> uploadDoc(String? path, String fileName) async {
+        if (path == null) return;
+        try {
+          await Supabase.instance.client.storage.from('documents').upload(
+            '${user.id}/$fileName.jpg', 
+            File(path), 
+            fileOptions: const FileOptions(upsert: true)
+          );
+        } catch (e) { print("STORAGE ERROR ($fileName): $e"); }
+      }
 
-      // 2. Groq Analysis & Loan Submission
-      final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
-      final prompt = """Analyze and return LOAN JSON: $transcriptText. JSON: {"status":"Approved","loan_amount":500000,"type":"Personal","risk":"Low"}""";
+      // Run uploads in background while we do logic
+      unawaited(uploadDoc(_aadhaarPath, 'aadhaar'));
+      unawaited(uploadDoc(_panPath, 'pan'));
 
-      print("AI: Analyzing transcript for loan parameters...");
-      Map<String, dynamic> analysis = {"status":"pending","loan_amount":10000,"type":"Personal","risk":"Manual Review"};
+      // 2. Groq Analysis
+      print("AI: Running risk analysis...");
+      Map<String, dynamic> analysis = {"status":"pending","loan_amount":25000,"type":"Personal","risk":"Manual Review"};
       
       try {
         final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
