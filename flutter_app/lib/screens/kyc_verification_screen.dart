@@ -277,6 +277,8 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           'user_id': user.id, 
           'amount_requested': (analysis['loan_amount'] ?? 25000).toDouble(), 
           'loan_type': analysis['type'] ?? 'Personal Loan', 
+          'tenure_months': analysis['tenure'] ?? 12, // Fixed: Added tenure
+          'purpose': analysis['purpose'] ?? 'Personal Expense', // Fixed: Added purpose
           'status': 'pending'
         });
       } catch (e) {

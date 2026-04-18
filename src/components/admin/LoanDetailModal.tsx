@@ -25,7 +25,9 @@ export default function LoanDetailModal({ loan, onClose, adminId }: Props) {
   const supabase = createClient()
   const router = useRouter()
 
-  const emi = calculateEMI(approvedAmount, interestRate, loan.tenure_months)
+  const emi = loan.tenure_months && loan.tenure_months > 0 
+    ? calculateEMI(approvedAmount, interestRate, loan.tenure_months) 
+    : 0
 
   const handleSave = async () => {
     setSaving(true)
@@ -43,11 +45,34 @@ export default function LoanDetailModal({ loan, onClose, adminId }: Props) {
         .eq('id', loan.id)
 
       if (error) throw error
-      toast.success('Loan application updated')
+
+      // If approved, trigger document generation
+      if (status === 'approved') {
+        try {
+          await fetch('/api/generate-loan-doc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              loanId: loan.id,
+              userId: loan.user_id,
+              amount: approvedAmount,
+              rate: interestRate,
+              emi: emi,
+              tenure: loan.tenure_months || 12
+            }),
+          })
+          toast.success('Sanction letter generated!')
+        } catch (e) {
+          console.error('Doc Error:', e)
+        }
+      }
+
+      toast.success('Loan application updated successfully')
       onClose()
-      router.refresh()
-    } catch {
-      toast.error('Failed to update loan')
+      setTimeout(() => window.location.reload(), 500) // Force UI Sync
+    } catch (err) {
+      console.error('Save Error:', err)
+      toast.error('Failed to update loan. Please check permissions.')
     } finally {
       setSaving(false)
     }

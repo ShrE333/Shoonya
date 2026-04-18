@@ -76,17 +76,27 @@ export default function AdminClient({ adminProfile, profiles, loans, kycs }: Pro
     }
   }
 
-  const handleVerifyKYC = async (kycId: string, status: 'verified' | 'failed') => {
+  const handleVerifyKYC = async (kycId: string, userId: string, status: 'verified' | 'failed') => {
     try {
-      const { error } = await supabase
+      // 1. Update KYC record
+      const { error: kycError } = await supabase
         .from('kyc')
-        .update({ status, verified_by: adminProfile.id })
+        .update({ status: status === 'verified' ? 'verified' : 'failed', verified_by: adminProfile.id })
         .eq('id', kycId)
-      if (error) throw error
-      toast.success(`KYC marked as ${status}`)
+      if (kycError) throw kycError
+
+      // 2. Update Profile status (CRITICAL SYNC)
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ kyc_status: status })
+        .eq('id', userId)
+      if (profileError) throw profileError
+
+      toast.success(`KYC and Profile marked as ${status}`)
       router.refresh()
-    } catch {
-      toast.error('Failed to update KYC status')
+    } catch (error: any) {
+      console.error("KYC SYNC ERROR:", error)
+      toast.error('Failed to sync KYC status')
     }
   }
 
@@ -426,13 +436,13 @@ export default function AdminClient({ adminProfile, profiles, loans, kycs }: Pro
                                   </a>
                                 )}
                                 <button
-                                  onClick={() => handleVerifyKYC(kyc.id, 'verified')}
+                                  onClick={() => handleVerifyKYC(kyc.id, profile.id, 'verified')}
                                   className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 transition-all"
                                 >
                                   <CheckCircle className="w-3 h-3" />
                                 </button>
                                 <button
-                                  onClick={() => handleVerifyKYC(kyc.id, 'failed')}
+                                  onClick={() => handleVerifyKYC(kyc.id, profile.id, 'failed')}
                                   className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-destructive/15 hover:bg-destructive/25 text-destructive transition-all"
                                 >
                                   <XCircle className="w-3 h-3" />
