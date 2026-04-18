@@ -113,14 +113,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               try {
                 final String url = await _supabase.storage.from('documents').createSignedUrl(path, 600);
                 final Uri uri = Uri.parse(url);
-                if (await canLaunchUrl(uri)) {
-                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                } else {
-                  throw 'Could not launch $url';
-                }
+                
+                // FORCE LAUNCH: Some Android builds fail the canLaunch check
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not open file in browser."), backgroundColor: Colors.redAccent));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Cloud access denied. Check folder: $path"), backgroundColor: Colors.redAccent));
                 }
               }
             },
