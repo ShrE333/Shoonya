@@ -211,12 +211,16 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _finish() async {
     if (_isAnalyzing) return;
     setState(() { _isAnalyzing = true; _agentText = "Finalizing Sanction & Notifying Admin..."; });
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
+    
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) throw "No user authenticated";
+
       // Shutdown Vision to save battery/resources
       await _vision.closeYoloModel();
       
       // 1. Upload Images to Vault
+      print("SYNC: Uploading documents to vault...");
       if (_aadhaarPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/aadhaar.jpg', File(_aadhaarPath!), fileOptions: const FileOptions(upsert: true));
       if (_panPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/pan.jpg', File(_panPath!), fileOptions: const FileOptions(upsert: true));
 
@@ -224,15 +228,39 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
       final prompt = """Analyze and return LOAN JSON: $transcriptText. JSON: {"status":"Approved","loan_amount":500000,"type":"Personal","risk":"Low"}""";
 
-      final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
-        headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
-        body: jsonEncode({"model": "llama-3.1-8b-instant", "messages": [{"role": "system", "content": "Return JSON only."}, {"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}));
-
-      final analysis = jsonDecode(jsonDecode(groqRes.body)['choices'][0]['message']['content']);
-      await Supabase.instance.client.from('loans').insert({'user_id': user.id, 'amount_requested': analysis['loan_amount'], 'loan_type': analysis['type'], 'status': 'pending', 'analysis_data': analysis});
-      await Supabase.instance.client.from('profiles').update({'kyc_status': 'verified'}).eq('id', user.id);
+      print("AI: Analyzing transcript for loan parameters...");
+      Map<String, dynamic> analysis = {"status":"pending","loan_amount":10000,"type":"Personal","risk":"Manual Review"};
       
+      try {
+        final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+          headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
+          body: jsonEncode({"model": "llama-3.1-8b-instant", "messages": [{"role": "system", "content": "Return JSON only."}, {"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}));
+        
+        if (groqRes.statusCode == 200) {
+          analysis = jsonDecode(jsonDecode(groqRes.body)['choices'][0]['message']['content']);
+        }
+      } catch (e) {
+        print("AI ERROR: Fallback to manual review parameters. Error: $e");
+      }
+
+      print("SYNC: Updating user profile status...");
+      await Supabase.instance.client.from('profiles').update({'kyc_status': 'verified'}).eq('id', user.id);
+
+      print("SYNC: Creating loan request entry...");
+      await Supabase.instance.client.from('loans').insert({
+        'user_id': user.id, 
+        'amount_requested': analysis['loan_amount'] ?? 10000, 
+        'loan_type': analysis['type'] ?? 'Personal', 
+        'status': 'pending', 
+        'analysis_data': analysis
+      });
+      
+      print("PIPELINE SUCCESS: Admin notified.");
       Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
+    } catch (e) {
+      print("PIPELINE CRITICAL ERROR: $e");
+      setState(() => _agentText = "Error in Submission. Please Inform Admin.");
+      Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
     }
   }
 
