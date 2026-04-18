@@ -56,7 +56,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     
     bool available = await _speech.initialize(
       onStatus: (status) => print('STT Status: $status'),
-      onError: (error) => print('STT Error: $error'),
+      onError: (error) => setState(() => _agentText = "Speech Error: ${error.errorMsg}"),
     );
 
     final session = await AudioSession.instance;
@@ -65,7 +65,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
     await _initCamera();
     if (available) {
-      _startFlow();
+      Timer(const Duration(milliseconds: 1500), () => _startFlow());
     } else {
       setState(() => _agentText = "Speech recognition not available on this device.");
     }
