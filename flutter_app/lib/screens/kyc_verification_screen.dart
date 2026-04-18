@@ -71,7 +71,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _boot() async {
     await [Permission.microphone, Permission.camera].request();
     final cams = await availableCameras();
-    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium, enableAudio: false);
+    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.high, enableAudio: false);
     await _cam!.initialize();
     
     // Load YOLO Model (STABLE CPU MODE)
@@ -148,31 +148,33 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     
     await _cam!.startImageStream((CameraImage image) async {
       frameCount++;
-      if (frameCount % 3 != 0) return; // Process every 3rd frame (Faster!)
+      if (frameCount % 5 != 0) return; 
       
       final result = await _vision.yoloOnFrame(
         bytesList: image.planes.map((p) => p.bytes).toList(),
         imageHeight: image.height,
         imageWidth: image.width,
         iouThreshold: 0.4,
-        confThreshold: 0.5, // Sensitive
-        classThreshold: 0.5,
+        confThreshold: 0.3, // Ultra-sensitive
+        classThreshold: 0.3,
       );
 
       if (mounted) {
         if (result.isNotEmpty) {
           setState(() => _yoloResults = result);
-          print("AI SEES: ${result.map((r) => "${r['tag']} (${(r['box'][4]*100).toStringAsFixed(0)}%)").join(", ")}");
+          // Print EVERYTHING for debugging
+          print("--- AI VISION SCAN ---");
+          for (var r in result) {
+            print("DETECTED: ${r['tag']} at ${(r['box'][4]*100).toStringAsFixed(1)}% confidence");
+          }
           
           final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
-          final found = result.any((r) => r['tag'] == targetLabel && r['box'][4] > 0.5);
+          final found = result.any((r) => r['tag'] == targetLabel && r['box'][4] > 0.4);
           
           if (found) {
             _cam!.stopImageStream();
             _autoCapture();
           }
-        } else {
-          setState(() => _yoloResults = []);
         }
       }
     });
@@ -263,7 +265,16 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
             margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(32)),
             child: Column(children: [
-              if (_isScanning) const Padding(padding: EdgeInsets.only(bottom: 12), child: Text("SCANNING FOR DOCUMENTS...", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 10))),
+              if (_isScanning) ...[
+                const Padding(padding: EdgeInsets.only(bottom: 12), child: Text("SCANNING FOR DOCUMENTS...", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 10))),
+                ElevatedButton.icon(
+                  onPressed: () => _autoCapture(),
+                  icon: const Icon(Icons.camera_alt, color: Colors.black),
+                  label: const Text("MANUAL CAPTURE", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                ),
+                const SizedBox(height: 12),
+              ],
               Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
           ),
