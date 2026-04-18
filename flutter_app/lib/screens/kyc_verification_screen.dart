@@ -130,9 +130,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       if (res.statusCode == 200) {
         await _player.play(BytesSource(base64Decode(jsonDecode(res.body)['audios'][0])));
         _player.onPlayerComplete.first.then((_) {
-          if (mounted) {
+          if (mounted && !_isScanning) {
             setState(() => _isSpeaking = false);
-            if (!_isScanning) _listen();
+            _listen(); // FULL AUTO
           }
         });
       } else { 
@@ -178,14 +178,34 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _autoCapture() async {
     try {
       final XFile image = await _cam!.takePicture();
-      if (_currentStep == 1) _aadhaarPath = image.path;
-      if (_currentStep == 2) _panPath = image.path;
+      final path = image.path;
+      if (_currentStep == 1) _aadhaarPath = path;
+      if (_currentStep == 2) _panPath = path;
       
+      // OCR with Groq Vision
+      print("OCR: Analyzing document with Groq Vision...");
+      try {
+        final bytes = await File(path).readAsBytes();
+        final base64Image = base64Encode(bytes);
+        final res = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+          headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
+          body: jsonEncode({
+            "model": "llama-3.2-11b-vision-preview",
+            "messages": [{
+              "role": "user",
+              "content": [
+                {"type": "text", "text": "Extract Document ID and Name from this Indian ID card. Return JSON: {'id': '...', 'name': '...'}"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$base64Image"}}
+              ]
+            }],
+            "response_format": {"type": "json_object"}
+          }));
+        print("OCR RESULT: ${res.body}");
+      } catch (e) { print("OCR LOG: $e"); }
+
       setState(() { _currentStep++; _isScanning = false; _yoloResults = []; });
       _nextStep();
-    } catch (e) {
-      _startVisionStream(); // Resume if failed
-    }
+    } catch (e) { _startVisionStream(); }
   }
 
   Future<void> _listen() async {
@@ -315,27 +335,24 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
               Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
           ),
-          GestureDetector(
-            onTap: () { if (!_isSpeaking && !_isScanning && !_isListening) _listen(); },
-            child: Container(
-              height: 120, 
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(_isListening ? "SYSTEM LISTENING..." : (_isSpeaking ? "AI OFFICER SPEAKING" : "TAP TO SPEAK"), style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                  const SizedBox(height: 8),
-                  Text(
-                    _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
-                  ),
-                ],
-              )
-            ),
+          Container(
+            height: 120, 
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+            decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(_isListening ? "SYSTEM LISTENING..." : (_isSpeaking ? "AI OFFICER SPEAKING" : "AUTO-READY"), style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                const SizedBox(height: 8),
+                Text(
+                  _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
+                ),
+              ],
+            )
           )
         ]))
       ])
