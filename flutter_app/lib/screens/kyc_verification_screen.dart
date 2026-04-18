@@ -74,15 +74,19 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
     
-    // Load YOLO Model
-    await _vision.loadYoloModel(
-      modelPath: 'assets/models/yolo_int8.tflite',
-      labels: 'assets/models/labels.txt', // We'll create this or use list
-      modelVersion: "yolov8",
-      quantization: true,
-      numThreads: 2,
-      useGpu: true,
-    );
+    // Load YOLO Model (STABLE CPU MODE)
+    try {
+      await _vision.loadYoloModel(
+        modelPath: 'assets/models/yolo_int8.tflite',
+        labels: 'assets/models/labels.txt',
+        modelVersion: "yolov8",
+        quantization: true,
+        numThreads: 2,
+        useGpu: false, // Changed to false for better device compatibility
+      );
+    } catch (e) {
+      print("VISION ERROR: $e");
+    }
 
     await _speech.initialize();
     setState(() => _isModelLoaded = true);
