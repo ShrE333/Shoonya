@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_vision/flutter_vision.dart';
 import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -28,23 +29,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
   CameraController? _cam;
+  late FlutterVision _vision;
   
   bool _isSpeaking = false;
   bool _isListening = false;
   bool _isAnalyzing = false;
   bool _isScanning = false;
+  bool _isModelLoaded = false;
   int _currentStep = 0;
   String _agentText = "Booting Security Core...";
   String _currentWords = "";
   final List<Map<String, String>> _transcript = [];
+  List<Map<String, dynamic>> _yoloResults = [];
   
   String? _aadhaarPath;
   String? _panPath;
 
   final List<String> _questionBank = [
     "Welcome to Shoonya. Please stay in frame and state your full name?",
-    "Identity: Align your Aadhaar card and tap CAPTURE when ready.", 
-    "Aadhaar stored. Now, please show your PAN card and tap CAPTURE.", 
+    "Identity Verification: Please show your original Aadhaar card clearly to the camera.", 
+    "Aadhaar verified. Now, please align your PAN card for our AI scanner.", 
     "Thank you. Everything looks good. What is your current employment type?",
     "What is your average monthly income after tax?",
     "Do you have any existing bank loans? If so, what is the EMI?",
@@ -60,21 +64,39 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   @override
   void initState() {
     super.initState();
+    _vision = FlutterVision();
     _boot();
   }
 
   Future<void> _boot() async {
     await [Permission.microphone, Permission.camera].request();
     final cams = await availableCameras();
-    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.high);
+    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
+    
+    // Load YOLO Model
+    await _vision.loadYoloModel(
+      modelPath: 'assets/models/yolo_int8.tflite',
+      labels: 'assets/models/labels.txt', // We'll create this or use list
+      modelVersion: "yolov8",
+      quantization: true,
+      numThreads: 2,
+      useGpu: true,
+    );
+
     await _speech.initialize();
-    if (mounted) setState(() {});
+    setState(() => _isModelLoaded = true);
     Timer(const Duration(seconds: 2), () => _nextStep());
   }
 
   @override
-  void dispose() { _speech.cancel(); _player.dispose(); _cam?.dispose(); super.dispose(); }
+  void dispose() { 
+    _vision.closeYoloModel();
+    _speech.cancel(); 
+    _player.dispose(); 
+    _cam?.dispose(); 
+    super.dispose(); 
+  }
 
   void _nextStep() {
     if (_isAnalyzing) return;
@@ -93,6 +115,8 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       _isScanning = (_currentStep == 1 || _currentStep == 2); 
       _transcript.add({"role": "officer", "text": text}); 
     });
+
+    if (_isScanning) _startVisionStream();
 
     try {
       final res = await http.post(Uri.parse("https://api.sarvam.ai/text-to-speech"),
@@ -114,17 +138,48 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     } catch (e) { setState(() => _isSpeaking = false); }
   }
 
-  Future<void> _captureCard() async {
-    if (_cam == null || !_cam!.value.isInitialized) return;
+  Future<void> _startVisionStream() async {
+    if (_cam == null || !_isScanning) return;
+    int frameCount = 0;
+    
+    await _cam!.startImageStream((CameraImage image) async {
+      frameCount++;
+      if (frameCount % 10 != 0) return; // Process every 10th frame for speed
+      
+      final result = await _vision.yoloOnFrame(
+        bytesList: image.planes.map((p) => p.bytes).toList(),
+        imageHeight: image.height,
+        imageWidth: image.width,
+        iouThreshold: 0.4,
+        confThreshold: 0.7,
+        classThreshold: 0.7,
+      );
+
+      if (result.isNotEmpty && mounted) {
+        setState(() => _yoloResults = result);
+        
+        // Auto-Capture logic based on labels
+        final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
+        final found = result.any((r) => r['tag'] == targetLabel);
+        
+        if (found) {
+          _cam!.stopImageStream();
+          _autoCapture();
+        }
+      }
+    });
+  }
+
+  Future<void> _autoCapture() async {
     try {
       final XFile image = await _cam!.takePicture();
       if (_currentStep == 1) _aadhaarPath = image.path;
       if (_currentStep == 2) _panPath = image.path;
       
-      setState(() { _currentStep++; _isScanning = false; });
+      setState(() { _currentStep++; _isScanning = false; _yoloResults = []; });
       _nextStep();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Capture failed. Try again.")));
+      _startVisionStream(); // Resume if failed
     }
   }
 
@@ -145,45 +200,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Future<void> _finish() async {
     if (_isAnalyzing) return;
-    setState(() { _isAnalyzing = true; _agentText = "Syncing Vault & Creating Loan Request..."; });
-
+    setState(() { _isAnalyzing = true; _agentText = "Finalizing Sanction & Notifying Admin..."; });
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
-      try {
-        // 1. Upload Images
-        if (_aadhaarPath != null) {
-           await Supabase.instance.client.storage.from('documents').upload('${user.id}/aadhaar.jpg', File(_aadhaarPath!), fileOptions: const FileOptions(upsert: true));
-        }
-        if (_panPath != null) {
-           await Supabase.instance.client.storage.from('documents').upload('${user.id}/pan.jpg', File(_panPath!), fileOptions: const FileOptions(upsert: true));
-        }
+      // 1. Upload Images to Vault
+      if (_aadhaarPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/aadhaar.jpg', File(_aadhaarPath!), fileOptions: const FileOptions(upsert: true));
+      if (_panPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/pan.jpg', File(_panPath!), fileOptions: const FileOptions(upsert: true));
 
-        // 2. Groq Analysis
-        final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
-        final prompt = """Analyze and return LOAN JSON: $transcriptText.
-        JSON: {"status":"Approved","loan_amount":500000,"type":"Personal","interest_rate":12,"tenure":24,"emi":24000,"risk":"Low","reason":"Verified Identity"}""";
+      // 2. Groq Analysis & Loan Submission
+      final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
+      final prompt = """Analyze and return LOAN JSON: $transcriptText. JSON: {"status":"Approved","loan_amount":500000,"type":"Personal","risk":"Low"}""";
 
-        final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
-          headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
-          body: jsonEncode({"model": "llama-3.1-8b-instant", "messages": [{"role": "system", "content": "Return JSON only."}, {"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}));
+      final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+        headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
+        body: jsonEncode({"model": "llama-3.1-8b-instant", "messages": [{"role": "system", "content": "Return JSON only."}, {"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}));
 
-        final analysis = jsonDecode(jsonDecode(groqRes.body)['choices'][0]['message']['content']);
-
-        // 3. Create Loan (The "Missing Link")
-        await Supabase.instance.client.from('loans').insert({
-          'user_id': user.id,
-          'amount_requested': analysis['loan_amount'],
-          'loan_type': analysis['type'],
-          'status': 'pending',
-          'analysis_data': analysis
-        });
-
-        // 4. Final Profile Update
-        await Supabase.instance.client.from('profiles').update({'kyc_status': 'verified', 'loan_limit': 1000000}).eq('id', user.id);
-        
-        setState(() => _agentText = "Success! Admin has been notified.");
-        Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
-      } catch (e) { context.go('/dashboard'); }
+      final analysis = jsonDecode(jsonDecode(groqRes.body)['choices'][0]['message']['content']);
+      await Supabase.instance.client.from('loans').insert({'user_id': user.id, 'amount_requested': analysis['loan_amount'], 'loan_type': analysis['type'], 'status': 'pending', 'analysis_data': analysis});
+      await Supabase.instance.client.from('profiles').update({'kyc_status': 'verified'}).eq('id', user.id);
+      
+      Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
     }
   }
 
@@ -193,34 +229,34 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       backgroundColor: const Color(0xFF020617),
       body: Stack(children: [
         if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-        Positioned.fill(child: Container(color: Colors.black.withOpacity(_isScanning ? 0.2 : 0.6))),
         
-        if (_isScanning) Center(
-          child: Container(
-            width: 300, height: 180,
-            decoration: BoxDecoration(border: Border.all(color: const Color(0xFF10B981), width: 3), borderRadius: BorderRadius.circular(16)),
-          ),
-        ),
+        // CUSTOM YOLO BOUNDING BOXES
+        if (_yoloResults.isNotEmpty) ..._yoloResults.map((res) {
+          return Positioned(
+            left: res['box'][0] * MediaQuery.of(context).size.width,
+            top: res['box'][1] * MediaQuery.of(context).size.height,
+            width: (res['box'][2] - res['box'][0]) * MediaQuery.of(context).size.width,
+            height: (res['box'][3] - res['box'][1]) * MediaQuery.of(context).size.height,
+            child: Container(
+              decoration: BoxDecoration(border: Border.all(color: const Color(0xFF10B981), width: 4), borderRadius: BorderRadius.circular(12)),
+              child: Align(alignment: Alignment.topLeft, child: Container(color: const Color(0xFF10B981), padding: const EdgeInsets.all(4), child: Text(res['tag'], style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)))),
+            ),
+          );
+        }),
 
+        Positioned.fill(child: Container(color: Colors.black.withOpacity(_isScanning ? 0.2 : 0.6))),
         SafeArea(child: Column(children: [
-          const Padding(padding: EdgeInsets.all(24), child: Text("SHOONYA SECURE INTERVIEW", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 2, fontSize: 10))),
+          const Padding(padding: EdgeInsets.all(24), child: Text("SHOONYA AI VISION PRO", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 2, fontSize: 10))),
           const Spacer(),
           Container(
             margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(32)),
-            child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, height: 1.4)),
+            child: Column(children: [
+              if (_isScanning) const Padding(padding: EdgeInsets.only(bottom: 12), child: Text("SCANNING FOR DOCUMENTS...", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 10))),
+              Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ]),
           ),
-          
-          if (_isScanning) Padding(
-            padding: const EdgeInsets.only(bottom: 40),
-            child: ElevatedButton.icon(
-              onPressed: _captureCard,
-              icon: const Icon(Icons.camera_alt),
-              label: const Text("CAPTURE DOCUMENT"),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.black, minimumSize: const Size(250, 60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))),
-            ),
-          )
-          else Container(height: 100, decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(50))), child: Center(child: Text(_isListening ? "LISTENING..." : "SPEAKING", style: const TextStyle(color: Colors.white24, fontWeight: FontWeight.bold))))
+          Container(height: 100, decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(50))), child: Center(child: Text(_isListening ? "LISTENING..." : "AI ANALYZING", style: const TextStyle(color: Colors.white24, fontWeight: FontWeight.bold))))
         ]))
       ])
     );
