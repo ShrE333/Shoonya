@@ -34,7 +34,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   final List<Map<String, String>> _history = [];
   String _statusMsg = "";
 
-  // Updated Key from your latest request
   final String sarvamKey = "sk_w9w5soy4_f4o4tZcMjnW8VDDFkRV0Os1Q";
   final String groqKey = const String.fromEnvironment('GROQ_API_KEY');
 
@@ -59,7 +58,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
       bool ok = await _speech.initialize();
       if (ok) {
-        Timer(const Duration(seconds: 2), () => _interviewStep());
+        Timer(const Duration(seconds: 2), () => _run());
       } else {
         setState(() => _statusMsg = "STT Init Failed");
       }
@@ -76,9 +75,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     super.dispose();
   }
 
-  void _interviewStep() {
+  void _run() {
     _currentStep = 1;
-    _communicate("Welcome to Shoonya. To proceed, please share which language you would like to use? English or Hindi?");
+    _communicate("Welcome to Shoonya. I am your personal AI loan officer. Before we begin, would you like to conduct this interview in English or Hindi?");
   }
 
   Future<void> _communicate(String text) async {
@@ -90,47 +89,34 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     });
 
     try {
-      print("TTS: Calling Sarvam bulbul:v3 (Synced with Gradio code)");
       final res = await http.post(
         Uri.parse("https://api.sarvam.ai/text-to-speech"),
-        headers: {
-          "api-subscription-key": sarvamKey, 
-          "Content-Type": "application/json"
-        },
+        headers: {"api-subscription-key": sarvamKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
           "target_language_code": _selectedLang,
           "speaker": _selectedLang == "hi-IN" ? "ritu" : "shubh",
-          "model": "bulbul:v3", // Matching your Gradio logic
+          "model": "bulbul:v3",
           "pace": 1.0,
           "speech_sample_rate": 24000,
           "temperature": 0.6
         }),
       );
 
-      print("TTS: Status ${res.statusCode}");
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final audios = data['audios'] as List;
-        if (audios.isNotEmpty) {
-           final bytes = base64Decode(audios[0]);
-           await _player.play(BytesSource(Uint8List.fromList(bytes)));
-           
-           _player.onPlayerComplete.first.then((_) {
-             if (mounted) {
-               setState(() => _isSpeaking = false);
-               _listenMic();
-             }
-           });
-        }
+        await _player.play(BytesSource(base64Decode(data['audios'][0])));
+        _player.onPlayerComplete.first.then((_) {
+          if (mounted) {
+            setState(() => _isSpeaking = false);
+            _listenMic();
+          }
+        });
       } else {
-        setState(() => _statusMsg = "Voice Server Error ${res.statusCode}");
-        print("SARVAM_ERR: ${res.body}");
         setState(() => _isSpeaking = false);
         _listenMic();
       }
     } catch (e) {
-      setState(() => _statusMsg = "Connection Error");
       setState(() => _isSpeaking = false);
       _listenMic();
     }
@@ -155,18 +141,45 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   void _onHeard(String text) {
     if (!_isListening) return;
     setState(() => _isListening = false);
-    if (text.trim().isEmpty) { _communicate("I'm sorry, I didn't hear that. Could you repeat?"); return; }
+    if (text.trim().isEmpty) { 
+      _communicate(_selectedLang == "hi-IN" ? "क्षमा करें, मुझे सुनाई नहीं दिया। क्या आप कृपया दोहरा सकते हैं?" : "I'm sorry, I didn't catch that. Could you please repeat that?"); 
+      return; 
+    }
     setState(() => _history.add({"role": "user", "text": text}));
     _processBrain(text);
   }
 
   Future<void> _processBrain(String input) async {
     if (!mounted) return;
-    setState(() => _agentText = "Updating records...");
+    setState(() => _agentText = "Synchronizing...");
     
-    final prompt = """Bank Officer Role. Step: $_currentStep. 
-    Steps: 1:Lang, 2:Name, 3:Job, 4:Salary, 5:Reason, 6:Amount, 7:Time, 8:Done.
-    Return JSON only: {"valid": true, "next": "Polite question", "lang": "en-IN"}""";
+    final prompt = """
+    YOU ARE A PROFESSIONAL BANK LOAN OFFICER INTERVIEWING A CUSTOMER.
+    Current Step: $_currentStep.
+    
+    The interview flow is:
+    1. Language selection (Completed after this turn)
+    2. Full Name
+    3. Employment type (Are they Salaried, Self-employed, or a Business owner?)
+    4. Monthly Salary/Income
+    5. Loan Purpose (Home, Personal, Vehicle, Education?)
+    6. Loan Amount required
+    7. Repayment tenure (How many years/months?)
+    8. Done
+
+    INSTRUCTIONS:
+    - If the user provides a logical answer (e.g., 'My name is Sriram'), set 'valid': true.
+    - If the user picked Hindi, yours questions MUST be in Hindi.
+    - Ask ONLY ONE question at a time.
+    - Be polite but professional.
+
+    RETURN JSON ONLY:
+    {
+      "valid": true,
+      "next_question": "Your next professional question",
+      "language_code": "en-IN or hi-IN" (Step 1 only)
+    }
+    """;
 
     try {
       final res = await http.post(
@@ -180,26 +193,30 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       );
 
       final data = jsonDecode(jsonDecode(res.body)['choices'][0]['message']['content']);
-      if (_currentStep == 1) _selectedLang = data['lang'] ?? "en-IN";
+      if (_currentStep == 1) _selectedLang = data['language_code'] ?? "en-IN";
+
       if (data['valid'] == true) {
         _currentStep++;
         if (_currentStep >= 8) {
-          _communicate("Thank you for your time. Your loan application is now under review.");
+          _communicate(_selectedLang == "hi-IN" ? "धन्यवाद। आपका आवेदन जमा हो गया है। आपका दिन शुभ हो!" : "Thank you very much. Your loan application has been successfully submitted for review. Have a professional day!");
           _save();
-          Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
+          Timer(const Duration(seconds: 6), () => context.go('/dashboard'));
         } else {
-          _communicate(data['next']);
+          _communicate(data['next_question']);
         }
       } else {
-        _communicate("I missed that detail. Can you please tell me again?");
+        _communicate(_selectedLang == "hi-IN" ? "क्या आप स्पष्ट कर सकते हैं?" : "I apologize, could you clarify that for me?");
       }
-    } catch (e) { _communicate("Systems are busy. Let's try that again?"); }
+    } catch (e) {
+       _communicate("Systems are slightly slow. Could we try that again?");
+    }
   }
 
   Future<void> _save() async {
     await Supabase.instance.client.from('kyc').update({
       'status': 'completed',
       'interview_transcript': jsonEncode(_history),
+      'completed_at': DateTime.now().toIso8601String(),
     }).eq('kyc_link', widget.token);
   }
 
@@ -210,15 +227,14 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       body: Stack(
         children: [
           if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-          Positioned.fill(child: Container(color: Colors.black54)),
+          Positioned.fill(child: Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black54, Colors.transparent, Colors.black87])))),
           SafeArea(child: Column(children: [
-            Padding(padding: const EdgeInsets.all(24), child: Row(children: [const Icon(Icons.verified, color: Color(0xFF10B981)), const SizedBox(width: 8), const Text("AI LOAN INTERVIEW", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1))])),
+            Padding(padding: const EdgeInsets.all(24), child: Row(children: [const Icon(Icons.verified, color: Color(0xFF10B981)), const SizedBox(width: 8), const Text("SHOONYA AI OFFICER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5))])),
             const Spacer(),
-            if (_statusMsg.isNotEmpty) Container(margin: const EdgeInsets.all(20), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)), child: Text(_statusMsg, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold))),
-            Container(margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(28), decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.95), borderRadius: BorderRadius.circular(32)), child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w600, height: 1.4))),
-            Container(padding: const EdgeInsets.all(32), decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), child: Column(children: [
+            Container(margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(32), decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white10)), child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600, height: 1.5))),
+            Container(padding: const EdgeInsets.fromLTRB(32, 40, 32, 50), decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), child: Column(children: [
               if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text("HEARING: $_currentWords", textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 16))),
-              Container(height: 75, width: double.infinity, decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(37.5), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(_isListening ? Icons.mic : Icons.voice_over_off, color: _isListening ? const Color(0xFF10B981) : Colors.white54), const SizedBox(width: 12), Text(_isListening ? "LISTENING..." : (_isSpeaking ? "OFFICER SPEAKING" : "READY"), style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold, fontSize: 16))]))
+              Container(height: 75, width: double.infinity, decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(37.5), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(_isListening ? Icons.mic : Icons.graphic_eq, color: _isListening ? const Color(0xFF10B981) : Colors.white54), const SizedBox(width: 12), Text(_isListening ? "I AM LISTENING..." : "OFFICER SPEAKING", style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white54, fontWeight: FontWeight.bold, fontSize: 16))]))
             ]))
           ]))
         ],
