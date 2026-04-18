@@ -31,23 +31,22 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   
   bool _isSpeaking = false;
   bool _isListening = false;
-  bool _isProcessing = false;
+  bool _isAnalyzing = false; // Strictly prevents repetition
   int _currentStep = 0;
-  String _agentText = "Booting Shonya AI...";
+  String _agentText = "Initializing Secure Environment...";
   String _currentWords = "";
   final List<Map<String, String>> _transcript = [];
-  String _dobForPassword = ""; // Will be extracted for PDF locking
+  String _dobForPassword = "";
 
-  // Hardcoded Professional Question Bank
   final List<String> _questionBank = [
-    "Welcome to Shoonya. I'm your AI bank officer. To begin, could you please state your full name as it appears on your documents?",
-    "Thank you. What is your date of birth? Please say the day, month, and year clearly.",
-    "Got it. What is your current employment type? Are you salaried, self-employed, or a business owner?",
-    "To help us calculate your loan limit, what is your average monthly income after tax?",
-    "What type of loan are you applying for today? Personal, Home, Education, or Vehicle?",
-    "How much funding do you require? Please state the full amount in Rupees.",
-    "Almost done. Over how many years or months would you like to repay this loan?",
-    "Thank you for sharing all the details. I am now analyzing your profile to generate your loan sanction report. Please stay on screen."
+    "Welcome to Shoonya. I'm your AI bank officer. May I know your full name for the record?",
+    "Thank you. To lock your profile, please clearly state your date of birth?",
+    "Perfect. What is your current employment type? Salaried, or Business owner?",
+    "Next, what is your average monthly income after all taxes?",
+    "Which loan product are you interested in today? Personal, Home, or Vehicle?",
+    "What is the specific loan amount you are applying for in Rupees?",
+    "Finally, over what period would you like to repay this loan? For example, 3 years or 5 years?",
+    "I have captured all the necessary data. I am now analyzing your response to generate your sanction report. Please remain on screen for a moment."
   ];
 
   final String sarvamKey = "sk_w9w5soy4_f4o4tZcMjnW8VDDFkRV0Os1Q";
@@ -56,17 +55,17 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   @override
   void initState() {
     super.initState();
-    _init();
+    _boot();
   }
 
-  Future<void> _init() async {
+  Future<void> _boot() async {
     await [Permission.microphone, Permission.camera].request();
-    final cameras = await availableCameras();
-    _cam = CameraController(cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium);
+    final cams = await availableCameras();
+    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium);
     await _cam!.initialize();
     await _speech.initialize();
     if (mounted) setState(() {});
-    Timer(const Duration(seconds: 2), () => _askNext());
+    Timer(const Duration(seconds: 2), () => _step());
   }
 
   @override
@@ -77,17 +76,16 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     super.dispose();
   }
 
-  // --- INTERVIEW LOGIC ---
-
-  void _askNext() {
+  void _step() {
+    if (_isAnalyzing) return;
     if (_currentStep < _questionBank.length) {
-      _talk(_questionBank[_currentStep]);
+      _speak(_questionBank[_currentStep]);
     } else {
-      _finishInterview();
+      _finalize();
     }
   }
 
-  Future<void> _talk(String text) async {
+  Future<void> _speak(String text) async {
     if (!mounted) return;
     setState(() {
       _agentText = text;
@@ -112,11 +110,14 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       if (res.statusCode == 200) {
         await _player.play(BytesSource(base64Decode(jsonDecode(res.body)['audios'][0])));
         _player.onPlayerComplete.first.then((_) {
-          if (mounted && _currentStep < _questionBank.length - 1) { // Don't listen on last step
+          if (mounted) {
             setState(() => _isSpeaking = false);
-            _listen();
-          } else if (_currentStep == _questionBank.length - 1) {
-             _askNext(); // Move to finish
+            // ONLY listen if it's NOT the final "Processing" line!
+            if (_currentStep < _questionBank.length - 1) {
+              _listen();
+            } else {
+              _finalize(); // Move directly to analysis if it was the last line
+            }
           }
         });
       } else {
@@ -138,9 +139,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         if (val.finalResult) {
           setState(() => _isListening = false);
           _transcript.add({"role": "user", "text": val.recognizedWords});
-          if (_currentStep == 1) _dobForPassword = val.recognizedWords; // Capture for PDF lock
+          if (_currentStep == 1) _dobForPassword = val.recognizedWords.replaceAll(RegExp(r'[^0-9]'), '');
           _currentStep++;
-          _askNext();
+          _step();
         }
       },
       localeId: "en-IN",
@@ -148,29 +149,15 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     );
   }
 
-  // --- FINAL AI ANALYSIS & PDF ---
-
-  Future<void> _finishInterview() async {
-    setState(() {
-      _isProcessing = true;
-      _agentText = "Generating Sanction Report...";
+  Future<void> _finalize() async {
+    if (_isAnalyzing) return;
+    setState(() { 
+      _isAnalyzing = true; 
+      _agentText = "Generating Final Audit...";
     });
 
-    final prompt = """
-    Analzye this bank interview transcript and return a LOAN SANCTION JSON.
-    Transcript: ${_transcript.map((m) => "${m['role']}: ${m['text']}").join("\n")}
-    
-    Return JSON:
-    {
-      "status": "Approved/Rejected",
-      "loan_amount": 0,
-      "interest_rate": 0.0,
-      "tenure": 0,
-      "emi": 0,
-      "risk_level": "Low/Medium/High",
-      "justification": "Reason for decision"
-    }
-    """;
+    final prompt = """Analyze and return LOAN JSON: ${_transcript.map((m) => "${m['role']}: ${m['text']}").join("\n")}
+    JSON: {"status":"Approved/Rejected","loan_amount":0,"interest_rate":0,"tenure":0,"emi":0,"risk":"Low/Med/High","reason":"string"}""";
 
     try {
       final res = await http.post(
@@ -178,78 +165,41 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
         body: jsonEncode({
           "model": "llama-3.1-8b-instant",
-          "messages": [{"role": "system", "content": "You are a professional loan sanctioning officer. Analyze and return JSON only."}, {"role": "user", "content": prompt}],
+          "messages": [{"role": "system", "content": "Return Loan Analysis JSON only."}, {"role": "user", "content": prompt}],
           "response_format": {"type": "json_object"}
         }),
       );
 
       final analysis = jsonDecode(jsonDecode(res.body)['choices'][0]['message']['content']);
-      await _generateAndSavePDF(analysis);
       
-      await Supabase.instance.client.from('kyc').update({
-        'status': 'completed',
-        'interview_transcript': jsonEncode(_transcript),
-        'analysis_report': jsonEncode(analysis),
-        'completed_at': DateTime.now().toIso8601String(),
-      }).eq('kyc_link', widget.token);
+      // Save to Database
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client.from('profiles').update({
+          'loan_limit': analysis['loan_amount'],
+          'kyc_status': 'verified',
+          'last_kyc_data': analysis
+        }).eq('id', user.id);
+      }
 
-      setState(() => _agentText = "Success! Report Generated & Secured.");
-      Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
+      await _createPDF(analysis);
+      
+      Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
     } catch (e) {
-      _talk("Final synchronization error. But your details are saved.");
+      context.go('/dashboard');
     }
   }
 
-  Future<void> _generateAndSavePDF(Map<String, dynamic> analysis) async {
+  Future<void> _createPDF(Map<String, dynamic> data) async {
     final pdf = pw.Document();
-    
-    // Simple password derivation from DOB (Cleaning non-digits)
-    final pwd = _dobForPassword.replaceAll(RegExp(r'[^0-9]'), '');
-    final securePwd = pwd.length >= 4 ? pwd : "shoonya123";
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Header(level: 0, child: pw.Text("Shoonya AI Loan Sanction Report", style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold))),
-              pw.SizedBox(height: 20),
-              pw.Text("Applicant Details", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-              pw.Divider(),
-              pw.Text("Report Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}"),
-              pw.Text("Status: ${analysis['status']}"),
-              pw.SizedBox(height: 20),
-              pw.Text("Financial Summary", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-              pw.TableHelper.fromTextArray(
-                context: context,
-                data: <List<String>>[
-                  <String>['Metric', 'Value'],
-                  <String>['Sanctioned Amount', 'Rs. ${analysis['loan_amount']}'],
-                  <String>['Interest Rate', '${analysis['interest_rate']}%'],
-                  <String>['Monthly EMI', 'Rs. ${analysis['emi']}'],
-                  <String>['Repayment Tenure', '${analysis['tenure']} Months'],
-                ],
-              ),
-              pw.SizedBox(height: 20),
-              pw.Text("Risk Assessment: ${analysis['risk_level']}", style: pw.TextStyle(color: analysis['risk_level'] == 'Low' ? PdfColors.green : PdfColors.red)),
-              pw.Paragraph(text: analysis['justification']),
-              pw.Spacer(),
-              pw.Footer(title: pw.Text("This is an AI-generated professional audit report by Shoonya AI."))
-            ],
-          );
-        },
-      ),
-    );
-
+    pdf.addPage(pw.Page(build: (c) => pw.Center(child: pw.Text("Shoonya Loan Sanction: ${data['status']} - Approved Limit: ₹${data['loan_amount']}"))));
     final dir = await getApplicationDocumentsDirectory();
-    final file = File("${dir.path}/Loan_Report_${widget.token}.pdf");
-    await file.writeAsBytes(await pdf.save()); // Note: Encoding/Encryption usually done via separate plugins or advanced PDF settings
-    
-    // Uploading to Supabase Storage
-    final supabase = Supabase.instance.client;
-    await supabase.storage.from('documents').upload('reports/${widget.token}.pdf', file);
+    final file = File("${dir.path}/report.pdf");
+    await file.writeAsBytes(await pdf.save());
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+       await Supabase.instance.client.storage.from('documents').upload('${user.id}/sanction_report.pdf', file, fileOptions: const FileOptions(upsert: true));
+    }
   }
 
   @override
@@ -258,18 +208,81 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       backgroundColor: const Color(0xFF0F172A),
       body: Stack(
         children: [
+          // Background Camera (Glass Effect)
           if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-          Positioned.fill(child: Container(color: Colors.black54)),
-          SafeArea(child: Column(children: [
-            Padding(padding: const EdgeInsets.all(24), child: Row(children: [const Icon(Icons.shield, color: Color(0xFF10B981)), const SizedBox(width: 8), const Text("SECURE KYC LOOP", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))])),
-            const Spacer(),
-            if (_isProcessing) const CircularProgressIndicator(color: Color(0xFF10B981)),
-            Container(margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(28), decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(28)), child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600, height: 1.4))),
-            Container(padding: const EdgeInsets.all(32), decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), child: Column(children: [
-              if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text("CAPTURING: $_currentWords", textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold))),
-              Container(height: 75, width: double.infinity, decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white10, borderRadius: BorderRadius.circular(37.5), border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white24, width: 2)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(_isListening ? Icons.mic : Icons.voice_over_off, color: _isListening ? const Color(0xFF10B981) : Colors.white54), const SizedBox(width: 12), Text(_isListening ? "LISTENING..." : "OFFICER SPEAKING", style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white24, fontWeight: FontWeight.bold))]))
-            ]))
-          ]))
+          Positioned.fill(child: Container(decoration: BoxDecoration(color: Colors.black.withOpacity(0.5)))),
+          
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("SHOONYA AI", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 2, fontSize: 10)),
+                          const Text("VERIFICATION LOOP", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+                        ],
+                      ),
+                      Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.security, color: Colors.white54, size: 20)),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                
+                // GLASS BUBBLE
+                Container(
+                  margin: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(40),
+                    border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 40, offset: const Offset(0, 10))]
+                  ),
+                  child: Column(
+                    children: [
+                      if (_isAnalyzing) const Padding(padding: EdgeInsets.only(bottom: 20), child: LinearProgressIndicator(backgroundColor: Colors.white10, color: Color(0xFF10B981))),
+                      Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w600, height: 1.5, letterSpacing: -0.5)),
+                    ],
+                  ),
+                ),
+
+                // CAPTIONING
+                if (_currentWords.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 40), child: Text(_currentWords, textAlign: TextAlign.center, style: TextStyle(color: const Color(0xFF10B981).withOpacity(0.8), fontSize: 16, fontWeight: FontWeight.w500, fontStyle: FontStyle.italic))),
+                const SizedBox(height: 32),
+
+                // FOOTER STATUS
+                Container(
+                  height: 100,
+                  width: double.infinity,
+                  decoration: const BoxDecoration(color: Color(0xFF020617), borderRadius: BorderRadius.vertical(top: Radius.circular(50))),
+                  child: Center(
+                    child: Container(
+                      height: 60,
+                      width: 250,
+                      decoration: BoxDecoration(
+                        color: _isListening ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: _isListening ? const Color(0xFF10B981) : Colors.white10, width: 2)
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(_isListening ? Icons.mic : Icons.speaker_notes, color: _isListening ? const Color(0xFF10B981) : Colors.white30),
+                          const SizedBox(width: 12),
+                          Text(_isListening ? "LISTENING..." : "OFFICER SPEAKING", style: TextStyle(color: _isListening ? const Color(0xFF10B981) : Colors.white38, fontWeight: FontWeight.w800, fontSize: 14)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

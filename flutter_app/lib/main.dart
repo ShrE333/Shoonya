@@ -20,6 +20,9 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
+import 'screens/documents_screen.dart';
+import 'screens/profile_screen.dart';
+
 // Shell Screen to provide persistent navigation
 class AppShell extends StatelessWidget {
   final Widget child;
@@ -27,13 +30,12 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Determine current index based on location
     final location = GoRouterState.of(context).uri.path;
     int index = 0;
     if (location.startsWith('/dashboard')) index = 0;
     else if (location.startsWith('/kyc')) index = 1;
-    else if (location.startsWith('/documents')) index = 2; // Dummy
-    else if (location.startsWith('/profile')) index = 3;   // Dummy
+    else if (location.startsWith('/documents')) index = 2;
+    else if (location.startsWith('/profile')) index = 3;
 
     final isKyc = location.contains('/kyc/');
 
@@ -43,17 +45,19 @@ class AppShell extends StatelessWidget {
         backgroundColor: const Color(0xFF0F172A),
         type: BottomNavigationBarType.fixed,
         selectedItemColor: const Color(0xFF10B981),
-        unselectedItemColor: Colors.white30,
+        unselectedItemColor: Colors.white24,
         currentIndex: index,
         onTap: (i) {
           if (i == 0) context.go('/dashboard');
-          if (i == 1) context.go('/kyc/demo'); // Demo link if not coming from deep link
+          if (i == 1) context.go('/kyc/demo');
+          if (i == 2) context.go('/documents');
+          if (i == 3) context.go('/profile');
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.verified_user), label: 'Verification'),
-          BottomNavigationBarItem(icon: Icon(Icons.description_outlined), label: 'Documents'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
+          BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded), label: 'Hub'),
+          BottomNavigationBarItem(icon: Icon(Icons.face_retouching_natural), label: 'KYC'),
+          BottomNavigationBarItem(icon: Icon(Icons.folder_shared_outlined), label: 'Vault'),
+          BottomNavigationBarItem(icon: Icon(Icons.person_pin_outlined), label: 'Profile'),
         ],
       ),
     );
@@ -75,7 +79,6 @@ final _router = GoRouter(
       path: '/signup',
       builder: (context, state) => const SignupScreen(),
     ),
-    // Auth-protected shell
     ShellRoute(
       builder: (context, state, child) => AppShell(child: child),
       routes: [
@@ -86,6 +89,14 @@ final _router = GoRouter(
         GoRoute(
           path: '/apply',
           builder: (context, state) => const ApplyLoanScreen(),
+        ),
+        GoRoute(
+          path: '/documents',
+          builder: (context, state) => const DocumentsScreen(),
+        ),
+        GoRoute(
+          path: '/profile',
+          builder: (context, state) => const ProfileScreen(),
         ),
         GoRoute(
           path: '/chat',
