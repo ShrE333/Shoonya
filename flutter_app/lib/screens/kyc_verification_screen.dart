@@ -238,7 +238,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       // Shutdown Vision to save battery/resources
       await _vision.closeYoloModel();
       
-      // 1. Upload Images to Vault (Silent background task)
+      // 1. Vault Documents (Sync with 'documents' bucket)
       Future<void> uploadDoc(String? path, String fileName) async {
         if (path == null) return;
         try {
@@ -247,8 +247,8 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           );
         } catch (e) { print("VAULT LOG: $e"); }
       }
-      unawaited(uploadDoc(_aadhaarPath, 'aadhaar'));
-      unawaited(uploadDoc(_panPath, 'pan'));
+      await uploadDoc(_aadhaarPath, 'aadhaar');
+      await uploadDoc(_panPath, 'pan');
 
       // 2. Groq Analysis (Optional enhancement)
       Map<String, dynamic> analysis = {"loan_amount":25000,"type":"Personal"};

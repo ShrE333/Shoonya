@@ -183,7 +183,7 @@ export default function LoanDetailModal({ loan, onClose, adminId }: Props) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 text-white text-sm font-semibold btn-glow disabled:opacity-70"
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-violet-600/90 text-white text-sm font-semibold btn-glow disabled:opacity-70 hover:bg-violet-600 transition-all"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
             {saving ? 'Saving...' : 'Save Changes'}
