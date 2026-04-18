@@ -67,7 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onPressed: () => context.push('/apply'),
           backgroundColor: const Color(0xFF10B981),
           elevation: 10,
-          shadowColor: const Color(0xFF10B981).withOpacity(0.5),
+          elevation: 10,
           child: const Icon(Icons.add, color: Colors.black, size: 32),
         ),
       ),
