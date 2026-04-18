@@ -203,6 +203,9 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     setState(() { _isAnalyzing = true; _agentText = "Finalizing Sanction & Notifying Admin..."; });
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
+      // Shutdown Vision to save battery/resources
+      await _vision.closeYoloModel();
+      
       // 1. Upload Images to Vault
       if (_aadhaarPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/aadhaar.jpg', File(_aadhaarPath!), fileOptions: const FileOptions(upsert: true));
       if (_panPath != null) await Supabase.instance.client.storage.from('documents').upload('${user.id}/pan.jpg', File(_panPath!), fileOptions: const FileOptions(upsert: true));
