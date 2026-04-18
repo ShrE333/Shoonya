@@ -306,7 +306,25 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
               Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
           ),
-          Container(height: 100, decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(50))), child: Center(child: Text(_isListening ? "LISTENING..." : "AI ANALYZING", style: const TextStyle(color: Colors.white24, fontWeight: FontWeight.bold))))
+          Container(
+            height: 120, 
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+            decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(_isListening ? "SYSTEM LISTENING..." : "OFFICER ANALYZING", style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                const SizedBox(height: 8),
+                Text(
+                  _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
+                ),
+              ],
+            )
+          )
         ]))
       ])
     );
