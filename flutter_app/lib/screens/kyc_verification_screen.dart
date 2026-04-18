@@ -104,22 +104,24 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     });
 
     try {
-      print("TTS Request (Sarvam) for: $text");
+      print("TTS Request (Sarvam v1) for: $text");
       final response = await http.post(
-        Uri.parse("https://api.sarvam.ai/text-to-speech"), 
+        Uri.parse("https://api.sarvam.ai/v1/text-to-speech"), 
         headers: {"api-subscription-key": sarvamApiKey, "Content-Type": "application/json"},
         body: jsonEncode({
           "text": text,
           "target_language_code": _selectedLanguage,
           "speaker": _selectedLanguage == "hi-IN" ? "ritu" : "shubh",
-          "model": "bulbul:v2",
+          "model": "bulbul:v2", // Stable bulbul v2
         }),
       );
 
+      print("TTS Response Status: ${response.statusCode}");
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final base64Audio = data['audios'][0];
         _lastTtsBytes = base64Decode(base64Audio);
+        print("Received ${_lastTtsBytes.length} bytes of audio.");
 
         await _player.setVolume(1.0);
         await _player.play(BytesSource(Uint8List.fromList(_lastTtsBytes)));
@@ -133,7 +135,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           }
         });
       } else {
-        print("TTS ERROR: ${response.body}");
+        print("TTS ERROR BODY: ${response.body}");
         setState(() => _isSpeaking = false);
         _startListening(); 
       }
@@ -157,7 +159,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           _onSpeechComplete(result.recognizedWords);
         }
       },
-      localeId: _selectedLanguage, // Matches chosen interview language
+      localeId: _selectedLanguage,
       listenFor: const Duration(seconds: 15),
       pauseFor: const Duration(seconds: 5),
     );
@@ -168,7 +170,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     setState(() => _isListening = false);
     
     if (recognizedText.isEmpty) {
-      _voicePrompt("I'm sorry, I didn't hear anything. Could you please repeat that?");
+      _voicePrompt("I'm sorry, it seems I couldn't hear you clearly. Could you please repeat that?");
       return;
     }
 
@@ -177,33 +179,35 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   }
 
   Future<void> _decideNextStep(String userText) async {
-    setState(() => _agentText = "Checking details...");
+    setState(() => _agentText = "Updating records...");
+    print("Logic Input: Step $_currentStep | User: $userText");
 
     String systemPrompt = """
-    You are a professional banking officer conducting a loan interview.
-    Current Interview Step: $_currentStep.
-    User's response: '$userText'.
+    You are a professional bank manager. 
+    Interview Step: $_currentStep.
+    User input: '$userText'.
     
-    If the answer is relevant, provide the NEXT question in a FULL, NATURAL, AND POLITE sentence. 
-    DO NOT use fragments like 'DOB' or 'Salary'. 
-    Instead say 'Could you please tell me your monthly salary?' or 'What type of loan are you looking for today?'.
-    
-    The steps are: 
-    1: Language Selection (Completed)
+    Goal: Advance through these steps:
+    1: Language Selection
     2: Name
-    3: Employment Status (Job/Business)
-    4: Monthly Income
-    5: Loan Category (Personal, Home, etc.)
-    6: Required Amount
-    7: Repayment Timeline
+    3: Job/Business (Employment)
+    4: Monthly Income (Salary)
+    5: Loan Category (Personal/Education/Home)
+    6: Required Loan Amount
+    7: Repayment Duration
     8: Done (Exit)
+
+    RULES:
+    - If user says a clear answer (like '50000 rupees' for income), mark 'valid': true.
+    - BE FRIENDLY. If user picked Hindi, answer in Hindi using NATURAL banking phrases.
+    - ALWAYS return a FULL, POLITE professional sentence for 'next_question'.
 
     Return ONLY JSON:
     {
       "valid": true,
-      "extracted_data": "value",
-      "next_question": "Full professional sentence here",
-      "language": "hi-IN or en-IN" (Only for step 1)
+      "extracted_data": "string value",
+      "next_question": "Natural professional banking sentence",
+      "language": "hi-IN or en-IN" (Step 1 only)
     }
     """;
 
@@ -218,7 +222,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         }),
       );
 
-      final result = jsonDecode(jsonDecode(response.body)['choices'][0]['message']['content']);
+      final decoded = jsonDecode(response.body);
+      final rawContent = decoded['choices'][0]['message']['content'];
+      print("Groq Intelligence: $rawContent");
+      
+      final result = jsonDecode(rawContent);
 
       if (_currentStep == 1) {
         _selectedLanguage = result['language'] ?? "en-IN";
@@ -228,18 +236,19 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         if (result['valid'] == true) {
           _currentStep++;
           if (_currentStep >= 8) {
-            _voicePrompt("Thank you for providing all the details. Your loan application has been submitted successfully and is now under review. Have a great day!");
+            _voicePrompt("Thank you very much. Your application is officially submitted. You can now close the interview.");
             _saveToSupabase();
-            Timer(const Duration(seconds: 6), () => context.go('/dashboard'));
+            Timer(const Duration(seconds: 5), () => context.go('/dashboard'));
           } else {
             _voicePrompt(result['next_question']);
           }
         } else {
-          _voicePrompt("I'm sorry, that doesn't seem quite right. Could you please provide the details I requested in a clear sentence?");
+          _voicePrompt("I'm sorry, I need that information specifically. Could you please clarify?");
         }
       }
     } catch (e) {
-      _voicePrompt("Technology glitch. Let me try that again.");
+      print("Logic Exception: $e");
+      _voicePrompt("I had a minor technical glitch. Let's continue. What was that again?");
     }
   }
 
@@ -291,7 +300,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("INTERVIEW IN PROGRESS - ${_isListening ? 'LISTENING...' : 'SPEAKING...'}", style: const TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
+                    Text("BANKING LINE - STEP $_currentStep/8", style: const TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     Expanded(
                       child: ListView.builder(
@@ -308,7 +317,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
                     if (_isListening && _currentWords.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 8.0),
-                        child: Text("Live Caption: $_currentWords", style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontStyle: FontStyle.italic)),
+                        child: Text("HEARING: $_currentWords", style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontStyle: FontStyle.italic)),
                       ),
                   ],
                 ),
