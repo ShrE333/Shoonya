@@ -71,7 +71,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _boot() async {
     await [Permission.microphone, Permission.camera].request();
     final cams = await availableCameras();
-    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.high, enableAudio: false);
+    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.back), ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
     
     // Load YOLO Model (STABLE CPU MODE)
@@ -148,7 +148,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   void _onCameraImage(CameraImage image) async {
     if (!_isScanning || _isProcessing) return;
     _frameCount++;
-    if (_frameCount % 4 != 0) return; // Balanced for high-stability
+    if (_frameCount % 10 != 0) return; // Ultra-stable for Android hardware
     
     _isProcessing = true;
     try {
@@ -157,7 +157,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         imageHeight: image.height,
         imageWidth: image.width,
         iouThreshold: 0.4,
-        confThreshold: 0.35, 
+        confThreshold: 0.25, // Hyper-sensitive for ID detection
       );
 
       if (mounted) {
