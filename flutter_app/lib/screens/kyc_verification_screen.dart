@@ -229,135 +229,125 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Future<void> _finish() async {
     if (_isAnalyzing) return;
-    setState(() { _isAnalyzing = true; _agentText = "Finalizing Sanction & Notifying Admin..."; });
+    setState(() { _isAnalyzing = true; _agentText = "Senior Credit Officer Analyzing Profile..."; });
     
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) throw "No user authenticated";
 
-      // Shutdown Vision to save battery/resources
       await _vision.closeYoloModel();
       
-      // 1. Vault Documents (Sync with 'documents' bucket)
-      Future<void> uploadDoc(String? path, String fileName) async {
-        if (path == null) return;
-        try {
-          await Supabase.instance.client.storage.from('documents').upload(
-            '${user.id}/$fileName.jpg', File(path), fileOptions: const FileOptions(upsert: true)
-          );
-        } catch (e) { print("VAULT LOG: $e"); }
-      }
-      await uploadDoc(_aadhaarPath, 'aadhaar');
-      await uploadDoc(_panPath, 'pan');
+      // Analysis with High-End Multi-Option Strategy
+      final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
+      final prompt = """Acting as a Senior Bank Manager, analyze this interview: $transcriptText.
+      Output ONLY JSON with 3 varied loan options (Economy, Standard, Platinum):
+      {"options": [
+        {"name": "Economy", "amount": 25000, "tenure": 12, "rate": 12.5},
+        {"name": "Standard", "amount": 50000, "tenure": 24, "rate": 11.0},
+        {"name": "Platinum", "amount": 100000, "tenure": 36, "rate": 9.5}
+      ], "limit": 100000}""";
 
-      // 2. Groq Analysis (Optional enhancement)
-      Map<String, dynamic> analysis = {"loan_amount":25000,"type":"Personal"};
+      Map<String, dynamic> analysis = {"options": [{"name": "Standard", "amount": 20000, "tenure": 12, "rate": 12}]};
       try {
-        final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
-        final prompt = """Return JSON: {"loan_amount":50000,"type":"Personal"} for: $transcriptText""";
         final groqRes = await http.post(Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
           headers: {"Authorization": "Bearer $groqKey", "Content-Type": "application/json"},
           body: jsonEncode({"model": "llama-3.1-8b-instant", "messages": [{"role": "system", "content": "Return JSON only."}, {"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}));
         if (groqRes.statusCode == 200) {
           analysis = jsonDecode(jsonDecode(groqRes.body)['choices'][0]['message']['content']);
         }
-      } catch (e) { print("AI LOG: $e"); }
+      } catch (e) { print("AI ERROR: $e"); }
 
-      // 3. SECURE SYNC: VERIFY FIRST
-      print("SYNC: Updating Identity Profile...");
-      await Supabase.instance.client.from('profiles').update({
-        'kyc_status': 'verified',
-        'loan_limit': (analysis['loan_amount'] ?? 25000).toDouble(),
-      }).eq('id', user.id);
-
-      // 4. SECURE SYNC: CREATE LOAN APPLICATION
-      print("SYNC: Creating Loan Application...");
-      try {
-        await Supabase.instance.client.from('loans').insert({
-          'user_id': user.id, 
-          'amount_requested': (analysis['loan_amount'] ?? 25000).toDouble(), 
-          'loan_type': analysis['type'] ?? 'Personal Loan', 
-          'tenure_months': analysis['tenure'] ?? 12, // Fixed: Added tenure
-          'purpose': analysis['purpose'] ?? 'Personal Expense', // Fixed: Added purpose
-          'status': 'pending'
-        });
-      } catch (e) {
-        print("LOAN SYNC LOG (Non-Critical): $e");
-        // We don't throw here so the user stays verified even if loan insert fails
-      }
+      // Update Profile & Create Multi-Option Loan
+      await Supabase.instance.client.from('profiles').update({'kyc_status': 'verified','loan_limit': (analysis['limit'] ?? 50000).toDouble()}).eq('id', user.id);
       
-      print("PIPELINE COMPLETE: User is verified.");
+      await Supabase.instance.client.from('loans').insert({
+        'user_id': user.id, 
+        'amount_requested': (analysis['options'][0]['amount']).toDouble(), 
+        'status': 'pending',
+        'offers': analysis['options']
+      });
+
+      // Generate PDF Offer (Standalone Logic)
+      final pdf = pw.Document();
+      pdf.addPage(pw.Page(build: (pw.Context context) => pw.Center(child: pw.Text("AI CREDIT OFFER - SHOONYA\nApproved Options for User ${user.email}"))));
+      final bytes = await pdf.save();
+      await Supabase.instance.client.storage.from('documents').upload('${user.id}/offer_sheet.pdf', bytes, fileOptions: const FileOptions(upsert: true));
+
+      setState(() => _agentText = "Credit Strategy Finalized. Check your Hub.");
       Timer(const Duration(seconds: 3), () => context.go('/dashboard'));
     } catch (e) {
-      print("PIPELINE FATAL: $e");
-      setState(() => _agentText = "Verification Saved. Finalizing Hub...");
-      Timer(const Duration(seconds: 4), () => context.go('/dashboard'));
+      print("SYNC FATAL: $e");
+      context.go('/dashboard');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF020617),
+      backgroundColor: Colors.black,
       body: Stack(children: [
-        if (_cam?.value.isInitialized ?? false) Positioned.fill(child: CameraPreview(_cam!)),
-        
-        // CUSTOM YOLO BOUNDING BOXES
-        if (_yoloResults.isNotEmpty) ..._yoloResults.map((res) {
-          return Positioned(
-            left: res['box'][0] * MediaQuery.of(context).size.width,
-            top: res['box'][1] * MediaQuery.of(context).size.height,
-            width: (res['box'][2] - res['box'][0]) * MediaQuery.of(context).size.width,
-            height: (res['box'][3] - res['box'][1]) * MediaQuery.of(context).size.height,
+        if (_cam?.value.isInitialized ?? false) Center(
             child: Container(
-              decoration: BoxDecoration(border: Border.all(color: const Color(0xFF10B981), width: 4), borderRadius: BorderRadius.circular(12)),
-              child: Align(alignment: Alignment.topLeft, child: Container(color: const Color(0xFF10B981), padding: const EdgeInsets.all(4), child: Text(res['tag'], style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)))),
+              width: 320, height: 400,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(54),
+                border: Border.all(color: Colors.white.withOpacity(0.1), width: 8),
+                boxShadow: [BoxShadow(color: const Color(0xFF10B981).withOpacity(0.2), blurRadius: 40)]
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(46),
+                child: AspectRatio(aspectRatio: 1, child: CameraPreview(_cam!)),
+              ),
             ),
-          );
-        }),
-
-        Positioned.fill(child: Container(color: Colors.black.withOpacity(_isScanning ? 0.2 : 0.6))),
-        SafeArea(child: Column(children: [
-          const Padding(padding: EdgeInsets.all(24), child: Text("SHOONYA AI VISION PRO", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, letterSpacing: 2, fontSize: 10))),
-          const Spacer(),
-          Container(
-            margin: const EdgeInsets.all(24), padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(color: const Color(0xFF1E293B).withOpacity(0.9), borderRadius: BorderRadius.circular(32)),
-            child: Column(children: [
-              if (_isScanning) ...[
-                const Padding(padding: EdgeInsets.only(bottom: 12), child: Text("SCANNING FOR DOCUMENTS...", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 10))),
-                ElevatedButton.icon(
-                  onPressed: () => _autoCapture(),
-                  icon: const Icon(Icons.camera_alt, color: Colors.black),
-                  label: const Text("MANUAL CAPTURE", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                ),
-                const SizedBox(height: 12),
-              ],
-              Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            ]),
           ),
+        
+        // Fintech Overlay
+        Positioned.fill(child: Container(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(colors: [Colors.transparent, Colors.black.withOpacity(0.9)], radius: 1.2)
+          )
+        )),
+
+        SafeArea(child: Column(children: [
+          const Padding(padding: EdgeInsets.all(32), child: Text("IDENTITY PROTOCOL v2", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 10))),
+          if (_isScanning) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF10B981), borderRadius: BorderRadius.circular(40)), child: const Text("AI SCANNING", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 8))),
+          const Spacer(),
+          
+          GlassBox(child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold))),
+
+          const SizedBox(height: 24),
           Container(
-            height: 120, 
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-            decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(40))), 
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(_isListening ? "SYSTEM LISTENING..." : (_isSpeaking ? "AI OFFICER SPEAKING" : "AUTO-READY"), style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                const SizedBox(height: 8),
-                Text(
-                  _isListening ? (_currentWords.isEmpty ? "Speak now..." : _currentWords) : "...", 
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  style: TextStyle(color: Colors.white.withOpacity(_isListening ? 1.0 : 0.2), fontSize: 16, fontWeight: FontWeight.w500)
-                ),
-              ],
-            )
+            height: 100, width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.vertical(top: Radius.circular(48))),
+            child: Row(children: [
+              Container(width: 12, height: 12, decoration: BoxDecoration(color: _isListening ? const Color(0xFF10B981) : Colors.white12, shape: BoxShape.circle)),
+              const SizedBox(width: 16),
+              Expanded(child: Text(_isListening ? "Listening: $_currentWords" : "AI OFFICER THINKING...", style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold))),
+            ]),
           )
         ]))
       ])
     );
   }
+}
+
+class GlassBox extends StatelessWidget {
+  final Widget child;
+  const GlassBox({super.key, required this.child});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 20)]
+      ),
+      child: child,
+    );
+  }
+}
 }
