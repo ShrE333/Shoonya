@@ -73,7 +73,13 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   }
 
   Future<void> _boot() async {
-    await [Permission.microphone, Permission.camera].request();
+    // UNIFIED PERMISSION PROTOCOL (Triple Handshake)
+    await [
+      Permission.microphone, 
+      Permission.camera, 
+      Permission.location
+    ].request();
+    
     final cams = await availableCameras();
     _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
@@ -164,15 +170,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         return;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          if (mounted) setState(() => _locationText = "ACCESS DENIED");
-          return;
-        }
-      }
-      
       Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium, timeLimit: const Duration(seconds: 5));
       if (mounted) {
         setState(() {
