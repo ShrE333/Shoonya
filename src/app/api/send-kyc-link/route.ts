@@ -37,27 +37,22 @@ export async function POST(req: Request) {
     const twilioFrom = rawTwilioFrom.startsWith('whatsapp:') ? rawTwilioFrom : `whatsapp:${rawTwilioFrom}`
 
     if (!twilioSid || !twilioToken || twilioSid === 'your_twilio_account_sid' || !twilioSid.startsWith('AC')) {
-       // Return a mock success if Twilio isn't properly configured yet
-       console.log(`[MOCK WHATSAPP SENT to ${phone}]: ${kycLink}`)
-       return NextResponse.json({ success: true, token, messageSid: 'mock_sid_for_testing' })
+       return NextResponse.json({ 
+         success: false, 
+         error: 'Twilio Credentials are not configured in .env.local (SID must start with AC)' 
+       }, { status: 400 })
     }
 
     const message = `Hello ${name || 'there'} 👋\n\nYour KYC verification link for *Shoonya* is ready.\n\nClick here to verify: ${kycLink}\n\n⏰ This link expires in 24 hours.\n\n_Shoonya Financial Services_`
 
-    // Clean the phone number (remove any non-digit characters)
     const cleanPhone = phone.replace(/\D/g, '')
-    
-    // Formatting logic for Indian numbers:
-    // 1. If it's 10 digits, it's a raw mobile number, add +91
-    // 2. If it's 12 digits and starts with 91, it already has the country code
     let formattedTo = ''
     if (cleanPhone.length === 10) {
       formattedTo = `whatsapp:+91${cleanPhone}`
     } else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
       formattedTo = `whatsapp:+${cleanPhone}`
     } else {
-      // Fallback for other formats
-      formattedTo = `whatsapp:+${cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone}`
+      formattedTo = `whatsapp:+${cleanPhone}`
     }
 
     const twilioResp = await fetch(
@@ -79,14 +74,12 @@ export async function POST(req: Request) {
     const twilioData = await twilioResp.json()
 
     if (!twilioResp.ok) {
-      console.error('Twilio Error:', twilioData)
-      console.log(`[MOCK WHATSAPP FALLBACK]: The link generated is ${kycLink}`)
-      // Do not throw, just allow the UI to succeed so testing can continue
+      console.error('Twilio Fatal Error:', twilioData)
       return NextResponse.json({ 
-        success: true, 
-        token, 
-        warning: `Twilio failed (${twilioData.message}), but KYC link was generated locally.`
-      })
+        success: false, 
+        error: `Twilio Error: ${twilioData.message || 'Unknown Failure'}`,
+        code: twilioData.code
+      }, { status: 400 })
     }
 
     // Save message SID
