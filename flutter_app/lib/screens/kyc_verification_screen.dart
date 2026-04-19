@@ -148,7 +148,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   void _onCameraImage(CameraImage image) async {
     if (!_isScanning || _isProcessing) return;
     _frameCount++;
-    if (_frameCount % 5 != 0) return; // Balanced for high-stability
+    if (_frameCount % 4 != 0) return; // Balanced for high-stability
     
     _isProcessing = true;
     try {
@@ -161,19 +161,22 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       );
 
       if (mounted) {
-        setState(() {
-          _yoloResults = results;
-          _isProcessing = false;
-        });
+        setState(() => _yoloResults = results);
         
         for (final res in results) {
-          if ((res['tag'] == 'aadhaar' || res['tag'] == 'pan') && res['box'][4] > 0.45) {
+          final tag = res['tag'];
+          final conf = res['box'][4];
+          
+          if ((tag == 'Aadhar' || tag == 'pan-card') && conf > 0.4) {
+            print("AI SIGNAL: $tag found! (Conf: $conf)");
             _autoCapture();
             break;
           }
         }
       }
     } catch (e) {
+      print("AI VISION ERROR: $e");
+    } finally {
       _isProcessing = false;
     }
   }
