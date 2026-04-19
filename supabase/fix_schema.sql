@@ -1,5 +1,5 @@
 -- ================================================================
--- MASTER DATABASE PATCH: Root-Level Pipeline Repair
+-- MASTER DATABASE PATCH: Root-Level Pipeline Repair (v2 - Re-runnable)
 -- ================================================================
 
 -- 1. HARDEN LOANS TABLE SCHEMA
@@ -10,10 +10,12 @@ ALTER TABLE loans ADD COLUMN IF NOT EXISTS interest_rate DECIMAL(10,2);
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_status text DEFAULT 'pending';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS loan_limit numeric DEFAULT 10000;
 
--- 2. RESET POLICIES FOR TOTAL VISIBILITY
+-- 2. RESET POLICIES FOR TOTAL VISIBILITY (V2 IDEMPOTENT)
 DROP POLICY IF EXISTS "admin loans" ON public.loans;
 DROP POLICY IF EXISTS "Users can view own loans" ON public.loans;
 DROP POLICY IF EXISTS "Users can insert own loans" ON public.loans;
+DROP POLICY IF EXISTS "admin_master_loans" ON public.loans; -- FIXED: Added for re-runnability
+DROP POLICY IF EXISTS "user_own_loans" ON public.loans;     -- FIXED: Added for re-runnability
 
 -- Universal Admin Policy: Can see and manage everything
 CREATE POLICY "admin_master_loans" ON public.loans 
@@ -30,15 +32,17 @@ WITH CHECK (auth.uid() = user_id);
 
 -- 3. UNBLOCK PROFILE UPDATES
 DROP POLICY IF EXISTS "own profile update" ON public.profiles;
+DROP POLICY IF EXISTS "user_manage_own_profile" ON public.profiles;
 CREATE POLICY "user_manage_own_profile" ON profiles 
 FOR ALL USING (auth.uid() = id)
 WITH CHECK (auth.uid() = id);
 
 -- 4. STORAGE ACCESS (Absolute Permission for 'documents' bucket)
 DROP POLICY IF EXISTS "document upload" ON storage.objects;
+DROP POLICY IF EXISTS "universal_doc_access" ON storage.objects;
 CREATE POLICY "universal_doc_access" ON storage.objects
 FOR ALL USING (bucket_id = 'documents');
 
--- 5. ENSURE ACCOUNT IS ADMIN (Update your specific email)
-UPDATE profiles SET role = 'admin' WHERE email = 'shr@gmail.com';
-UPDATE profiles SET kyc_status = 'verified', loan_limit = 500000 WHERE email = 'shr@gmail.com';
+-- 5. ENSURE ACCOUNT IS ADMIN (REPLACE 'YOUR_EMAIL' with your email)
+-- UPDATE profiles SET role = 'admin' WHERE email = 'YOUR_EMAIL';
+-- UPDATE profiles SET kyc_status = 'verified', loan_limit = 500000 WHERE email = 'YOUR_EMAIL';
