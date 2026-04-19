@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter_vision/flutter_vision.dart';
 import 'package:http/http.dart' as http;
@@ -177,8 +178,13 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
-        _locationText = "UPLINK: ${_lat!.toStringAsFixed(4)}, ${_lng!.toStringAsFixed(4)}";
       });
+      
+      List<Placemark> placemarks = await placemarkFromCoordinates(_lat!, _lng!);
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+        setState(() => _locationText = "📍 ${p.locality?.toUpperCase() ?? 'UPLINK'}, ${p.administrativeArea?.toUpperCase() ?? 'ACTIVE'}");
+      }
     } catch (e) {
       setState(() => _locationText = "GPS: UNAVAILABLE");
     }
@@ -289,13 +295,24 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       
       // Analysis with High-End Multi-Option Strategy
       final transcriptText = _transcript.map((m) => "${m['role']}: ${m['text']}").join("\n");
-      final prompt = """Acting as a Senior Bank Manager, analyze this interview: $transcriptText.
-      Output ONLY JSON with 3 varied loan options (Economy, Standard, Platinum):
-      {"options": [
-        {"name": "Economy", "amount": 25000, "tenure": 12, "rate": 12.5},
-        {"name": "Standard", "amount": 50000, "tenure": 24, "rate": 11.0},
-        {"name": "Platinum", "amount": 100000, "tenure": 36, "rate": 9.5}
-      ], "limit": 100000}""";
+      final prompt = """
+      Analyze this transcript of a loan applicant. 
+      The applicant's spoken transcript is: "$transcriptText"
+      
+      TASK: Generate 3 loan offer options based on the applicant's REQUEST and PROFILE.
+      If the applicant asks for a specific amount (e.g. 5 Lakhs, 50 Lakhs), BASE THE OFFERS ON THAT AMOUNT.
+      Do not default to 25,000 if a higher amount was requested.
+      
+      Return ONLY a JSON object:
+      {
+        "options": [
+          {"name": "Economy", "amount": 0, "tenure": 12, "rate": 12.5, "description": "Lower amount, fast approval"},
+          {"name": "Standard", "amount": 0, "tenure": 24, "rate": 10.5, "description": "Medium term, balanced"},
+          {"name": "Platinum", "amount": 0, "tenure": 36, "rate": 8.5, "description": "Highest eligible amount, best rate"}
+        ]
+      }
+      Replace 0 with calculated amounts based on their request.
+      """;
 
       Map<String, dynamic> analysis = {"options": [{"name": "Standard", "amount": 20000, "tenure": 12, "rate": 12}]};
       try {
@@ -521,10 +538,10 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           )
         )),
 
-        // LOCATION HUD (TOP RIGHT - FIXED STACK CHILD)
+        // LOCATION HUD (TOP RIGHT - OFFSET FOR NO OVERLAP)
         if (_locationText.isNotEmpty)
           Positioned(
-            top: 60, right: 32,
+            top: 75, right: 32,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))),
