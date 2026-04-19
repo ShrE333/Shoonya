@@ -11,178 +11,186 @@ class ApplyLoanScreen extends StatefulWidget {
 
 class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
   final _supabase = Supabase.instance.client;
-  double _amountRequested = 10000;
-  double _maxLimit = 100000;
-  String _loanType = "Personal Loan";
+  List<dynamic> _offers = [];
+  int _selectedIndex = 1; // Default to Standard
   bool _isLoading = true;
   bool _isSaving = false;
-
   bool _hasPendingLoan = false;
 
   @override
   void initState() {
     super.initState();
-    _fetchLimit();
-    _checkExistingLoans();
+    _fetchOffersAndStatus();
   }
 
-  Future<void> _checkExistingLoans() async {
+  Future<void> _fetchOffersAndStatus() async {
     final user = _supabase.auth.currentUser;
-    if (user != null) {
-      final loans = await _supabase.from('loans')
+    if (user == null) return;
+
+    try {
+      // 1. Check for pending
+      final existing = await _supabase.from('loans')
           .select()
           .eq('user_id', user.id)
           .or('status.eq.pending,status.eq.under_review');
       
-      if (loans.isNotEmpty) {
-        setState(() => _hasPendingLoan = true);
+      if (existing.isNotEmpty) {
+        setState(() { _hasPendingLoan = true; _isLoading = false; });
+        return;
       }
-    }
-  }
 
-  Future<void> _fetchLimit() async {
-    final user = _supabase.auth.currentUser;
-    if (user != null) {
-      final profile = await _supabase.from('profiles').select().eq('id', user.id).single();
+      // 2. Fetch latest loan with offers
+      final lastLoan = await _supabase.from('loans')
+          .select('offers')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .single();
+
       setState(() {
-        _maxLimit = (profile['loan_limit'] ?? 10000).toDouble();
-        _amountRequested = _maxLimit > 10000 ? 10000 : _maxLimit;
+        _offers = lastLoan['offers'] ?? [];
         _isLoading = false;
       });
+    } catch (e) {
+      setState(() => _isLoading = false);
     }
   }
 
   Future<void> _submit() async {
+    if (_offers.isEmpty) return;
+    setState(() => _isSaving = true);
+    
+    final selected = _offers[_selectedIndex];
     final user = _supabase.auth.currentUser;
-    if (user != null) {
-      final profile = await _supabase.from('profiles').select().eq('id', user.id).single();
-      if (profile['kyc_status'] != 'verified') {
-        if (mounted) context.go('/kyc/demo');
-        return;
-      }
-      
-      setState(() => _isSaving = true);
-      await _supabase.from('loans').insert({
-        'user_id': user.id,
-        'amount_requested': _amountRequested,
-        'loan_type': _loanType,
-        'status': 'pending'
-      });
+    
+    try {
+      // Update existing pending loan with selection
+      final lastLoan = await _supabase.from('loans')
+          .select('id')
+          .eq('user_id', user!.id)
+          .eq('status', 'pending')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .single();
+
+      await _supabase.from('loans').update({
+        'amount_requested': (selected['amount']).toDouble(),
+        'tenure_months': selected['tenure'],
+        'interest_rate': (selected['rate']).toDouble(),
+        'status': 'pending',
+        'selected_offer_index': _selectedIndex
+      }).eq('id', lastLoan['id']);
+
       if (mounted) context.go('/dashboard');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Submission failed. Try again."), backgroundColor: Colors.redAccent));
+      }
+    } finally {
+      setState(() => _isSaving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFF020617),
       appBar: AppBar(
-        title: const Text("LOAN CALCULATOR", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 14)),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text("OFFER STRATEGY", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 12)),
+        centerTitle: true, backgroundColor: Colors.transparent, elevation: 0,
       ),
       body: _isLoading 
-        ? const Center(child: CircularProgressIndicator())
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF10B981)))
         : _hasPendingLoan
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(40),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.pending_actions, color: Color(0xFFF59E0B), size: 64),
-                    const SizedBox(height: 24),
-                    const Text("APPLICATION IN PROGRESS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-                    const SizedBox(height: 12),
-                    const Text("You already have a loan request under review. Please wait for admin approval before applying for a new one.", textAlign: TextAlign.center, style: TextStyle(color: Colors.white38, fontSize: 13)),
-                    const SizedBox(height: 32),
-                    ElevatedButton(onPressed: () => context.go('/dashboard'), child: const Text("GO TO HUB")),
-                  ],
-                ),
-              ),
-            )
-          : SingleChildScrollView(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("SELECT AMOUNT", style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                const SizedBox(height: 16),
-                
-                // DISPLAY CARD
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(40),
-                  decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.05), borderRadius: BorderRadius.circular(32), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.2))),
-                  child: Column(
-                    children: [
-                      Text("₹${_amountRequested.toInt()}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 48, fontWeight: FontWeight.w900)),
-                      Text("OF ₹${_maxLimit.toInt()} APPROVED LIMIT", style: const TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: 40),
-                Slider(
-                  value: _amountRequested,
-                  min: 5000,
-                  max: _maxLimit < 5000 ? 5000 : _maxLimit,
-                  activeColor: const Color(0xFF10B981),
-                  inactiveColor: Colors.white12,
-                  onChanged: (val) => setState(() => _amountRequested = val),
-                ),
-                
-                const SizedBox(height: 48),
-                const Text("LOAN PURPOSE", style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                const SizedBox(height: 16),
-                _buildTypeTile("Personal Loan", Icons.person_outline),
-                _buildTypeTile("Home Loan", Icons.home_work_outlined),
-                _buildTypeTile("Vehicle Loan", Icons.directions_car_filled_outlined),
-                
-                const SizedBox(height: 60),
-                _isSaving 
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF10B981)))
-                  : ElevatedButton(
-                      onPressed: _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        foregroundColor: Colors.black,
-                        minimumSize: const Size(double.infinity, 64),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                        elevation: 10,
-                        shadowColor: const Color(0xFF10B981).withOpacity(0.4)
-                      ),
-                      child: const Text("SUBMIT LOAN REQUEST", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                    ),
-              ],
-            ),
-          ),
+          ? _buildPendingState()
+          : _offers.isEmpty 
+            ? _buildNoOffersState()
+            : _buildOfferSelection(),
     );
   }
 
-  Widget _buildTypeTile(String type, IconData icon) {
-    final bool isSelected = _loanType == type;
+  Widget _buildOfferSelection() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("AI RECOMMENDED PACKAGES", style: TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
+          const SizedBox(height: 24),
+          ..._offers.asMap().entries.map((entry) => _buildOfferCard(entry.key, entry.value)),
+          const SizedBox(height: 48),
+          _isSaving 
+            ? const Center(child: CircularProgressIndicator(color: Color(0xFF10B981)))
+            : ElevatedButton(
+                onPressed: _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.black,
+                  minimumSize: const Size(double.infinity, 64),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text("CONFIRM SELECTION", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfferCard(int index, dynamic offer) {
+    final bool isSelected = _selectedIndex == index;
     return GestureDetector(
-      onTap: () => setState(() => _loanType = type),
+      onTap: () => setState(() => _selectedIndex = index),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF10B981).withOpacity(0.1) : Colors.white.withOpacity(0.03),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: isSelected ? const Color(0xFF10B981) : Colors.white.withOpacity(0.05))
+          color: isSelected ? const Color(0xFF10B981).withOpacity(0.05) : Colors.white.withOpacity(0.02),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: isSelected ? const Color(0xFF10B981) : Colors.white12, width: 2),
         ),
         child: Row(
           children: [
-            Icon(icon, color: isSelected ? const Color(0xFF10B981) : Colors.white24),
-            const SizedBox(width: 16),
-            Text(type, style: TextStyle(color: isSelected ? Colors.white : Colors.white54, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-            const Spacer(),
-            if (isSelected) const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(offer['name'].toString().toUpperCase(), style: TextStyle(color: isSelected ? const Color(0xFF10B981) : Colors.white24, fontWeight: FontWeight.bold, fontSize: 10, letterSpacing: 1)),
+                  const SizedBox(height: 8),
+                  Text("₹${offer['amount']}", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 4),
+                  Text("${offer['tenure']} Months @ ${offer['rate']}% p.a.", style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                ],
+              ),
+            ),
+            if (isSelected) const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 32),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPendingState() {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.hourglass_empty, color: Color(0xFF10B981), size: 64),
+        const SizedBox(height: 24),
+        const Text("STRATEGY UNDER REVIEW", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 32),
+        ElevatedButton(onPressed: () => context.go('/dashboard'), child: const Text("BACK TO HUB")),
+      ]),
+    );
+  }
+
+  Widget _buildNoOffersState() {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.security, color: Colors.white10, size: 64),
+        const SizedBox(height: 24),
+        const Text("NO AI OFFERS FOUND", style: TextStyle(color: Colors.white24)),
+        const SizedBox(height: 12),
+        const Text("Please complete KYC first", style: TextStyle(color: Colors.white10)),
+        const SizedBox(height: 32),
+        ElevatedButton(onPressed: () => context.go('/kyc/demo'), child: const Text("START AI KYC")),
+      ]),
     );
   }
 }
