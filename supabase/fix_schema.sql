@@ -1,33 +1,44 @@
 -- ================================================================
--- DATABASE PATCH: Fixing KYC Schema & Admin Permissions
--- Run this in your Supabase SQL Editor to unblock the pipeline!
+-- MASTER DATABASE PATCH: Root-Level Pipeline Repair
 -- ================================================================
 
--- 1. ADD MISSING COLUMNS
+-- 1. HARDEN LOANS TABLE SCHEMA
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS offers JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS selected_offer_index INTEGER;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS tenure_months INTEGER;
+ALTER TABLE loans ADD COLUMN IF NOT EXISTS interest_rate DECIMAL(10,2);
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS kyc_status text DEFAULT 'pending';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS loan_limit numeric DEFAULT 10000;
 
--- 2. CREATE 'documents' BUCKET (Used by the platform)
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('documents', 'documents', true)
-ON CONFLICT (id) DO NOTHING;
-
--- 3. UNBLOCK ADMINS (Allow Admins to see & update ALL loans)
+-- 2. RESET POLICIES FOR TOTAL VISIBILITY
 DROP POLICY IF EXISTS "admin loans" ON public.loans;
-CREATE POLICY "admin loans" ON public.loans 
+DROP POLICY IF EXISTS "Users can view own loans" ON public.loans;
+DROP POLICY IF EXISTS "Users can insert own loans" ON public.loans;
+
+-- Universal Admin Policy: Can see and manage everything
+CREATE POLICY "admin_master_loans" ON public.loans 
 FOR ALL USING (
-  (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
+  EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin')
+) WITH CHECK (
+  EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin')
 );
 
--- 4. UNBLOCK USER UPDATES (Allow users to finish their KYC)
-DROP POLICY IF EXISTS "own profile update" ON public.profiles;
-CREATE POLICY "own profile update" ON profiles 
-FOR UPDATE USING (auth.uid() = id);
+-- Universal User Policy: Can manage their own loans
+CREATE POLICY "user_own_loans" ON public.loans 
+FOR ALL USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
 
--- 5. STORAGE PERMISSIONS (Allow uploads to documents bucket)
+-- 3. UNBLOCK PROFILE UPDATES
+DROP POLICY IF EXISTS "own profile update" ON public.profiles;
+CREATE POLICY "user_manage_own_profile" ON profiles 
+FOR ALL USING (auth.uid() = id)
+WITH CHECK (auth.uid() = id);
+
+-- 4. STORAGE ACCESS (Absolute Permission for 'documents' bucket)
 DROP POLICY IF EXISTS "document upload" ON storage.objects;
-CREATE POLICY "document upload" ON storage.objects
+CREATE POLICY "universal_doc_access" ON storage.objects
 FOR ALL USING (bucket_id = 'documents');
 
--- 6. MAKE SURE YOU ARE AN ADMIN (REPLACE with your email)
--- UPDATE profiles SET role = 'admin' WHERE email = 'YOUR_EMAIL_HERE';
+-- 5. ENSURE ACCOUNT IS ADMIN (Update your specific email)
+UPDATE profiles SET role = 'admin' WHERE email = 'shr@gmail.com';
+UPDATE profiles SET kyc_status = 'verified', loan_limit = 500000 WHERE email = 'shr@gmail.com';
