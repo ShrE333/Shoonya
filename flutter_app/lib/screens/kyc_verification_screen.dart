@@ -287,17 +287,44 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       backgroundColor: Colors.black,
       body: Stack(children: [
         if (_cam?.value.isInitialized ?? false) Center(
-            child: Container(
-              width: 320, height: 400,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(54),
-                border: Border.all(color: Colors.white.withOpacity(0.1), width: 8),
-                boxShadow: [BoxShadow(color: const Color(0xFF10B981).withOpacity(0.2), blurRadius: 40)]
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(46),
-                child: AspectRatio(aspectRatio: 1, child: CameraPreview(_cam!)),
-              ),
+            child: Stack(
+              children: [
+                Container(
+                  width: 320, height: 400,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(54),
+                    border: Border.all(color: Colors.white.withOpacity(0.1), width: 8),
+                    boxShadow: [BoxShadow(color: const Color(0xFF10B981).withOpacity(0.2), blurRadius: 40)]
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(46),
+                    child: AspectRatio(aspectRatio: 1, child: CameraPreview(_cam!)),
+                  ),
+                ),
+                // AI DETECTION OVERLAY (CALIBRATED FOR 320x480)
+                if (_yoloResults.isNotEmpty) ..._yoloResults.map((res) {
+                  return Positioned(
+                    left: res['box'][0] * 320,
+                    top: res['box'][1] * 400,
+                    width: (res['box'][2] - res['box'][0]) * 320,
+                    height: (res['box'][3] - res['box'][1]) * 400,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: const Color(0xFF10B981), width: 3),
+                        borderRadius: BorderRadius.circular(8)
+                      ),
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: Container(
+                          color: const Color(0xFF10B981),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Text(res['tag'], style: const TextStyle(color: Colors.black, fontSize: 8, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
             ),
           ),
         
