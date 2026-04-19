@@ -94,7 +94,11 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
     await _speech.initialize();
     setState(() => _isModelLoaded = true);
-    Timer(const Duration(seconds: 2), () => _nextStep());
+    
+    // Explicit Greeting & First Engagement
+    _agentText = "Welcome to Shoonya Identity Protocol v2.";
+    await Future.delayed(const Duration(seconds: 3));
+    _nextStep();
   }
 
   @override
@@ -156,7 +160,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() => _locationText = "GPS: DISABLED");
+        if (mounted) setState(() => _locationText = "GPS: DISABLED");
         return;
       }
 
@@ -164,30 +168,35 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          setState(() => _locationText = "ACCESS DENIED");
+          if (mounted) setState(() => _locationText = "ACCESS DENIED");
           return;
         }
       }
       
-      if (permission == LocationPermission.deniedForever) {
-        setState(() => _locationText = "ACCESS BLOCKED");
-        return;
+      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium, timeLimit: const Duration(seconds: 5));
+      if (mounted) {
+        setState(() {
+          _lat = pos.latitude;
+          _lng = pos.longitude;
+          _locationText = "UPLINK: ${_lat!.toStringAsFixed(4)}, ${_lng!.toStringAsFixed(4)}";
+        });
       }
-
-      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
-      setState(() {
-        _lat = pos.latitude;
-        _lng = pos.longitude;
-      });
       
-      List<Placemark> placemarks = await placemarkFromCoordinates(_lat!, _lng!);
-      if (placemarks.isNotEmpty) {
-        final p = placemarks.first;
-        setState(() => _locationText = "📍 ${p.locality?.toUpperCase() ?? 'UPLINK'}, ${p.administrativeArea?.toUpperCase() ?? 'ACTIVE'}");
-      }
+      // Background Reverse Geocode (Doesn't block the UI)
+      _reverseGeocode();
     } catch (e) {
-      setState(() => _locationText = "GPS: UNAVAILABLE");
+      if (mounted) setState(() => _locationText = "GPS: UNAVAILABLE");
     }
+  }
+
+  Future<void> _reverseGeocode() async {
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(_lat!, _lng!).timeout(const Duration(seconds: 5));
+      if (placemarks.isNotEmpty && mounted) {
+        final p = placemarks.first;
+        setState(() => _locationText = "📍 ${p.locality?.toUpperCase() ?? 'REGION'}, ${p.administrativeArea?.toUpperCase() ?? 'OK'}");
+      }
+    } catch (_) {}
   }
 
   void _onCameraImage(CameraImage image) async {
