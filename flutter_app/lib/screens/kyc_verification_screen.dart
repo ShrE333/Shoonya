@@ -170,7 +170,13 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         return;
       }
 
-      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium, timeLimit: const Duration(seconds: 5));
+      // Hardware Warmup (Gives antenna time to seek after permission)
+      await Future.delayed(const Duration(seconds: 1));
+      
+      Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.balanced, 
+        timeLimit: const Duration(seconds: 10)
+      );
       if (mounted) {
         setState(() {
           _lat = pos.latitude;

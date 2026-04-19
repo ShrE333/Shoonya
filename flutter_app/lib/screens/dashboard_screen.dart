@@ -138,23 +138,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildLoanCard(Map<String, dynamic> loan) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white.withOpacity(0.05))),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(loan['loan_type'] ?? "Personal Loan", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 4),
-              Text("Request Status: ${loan['status']}", style: TextStyle(color: loan['status'] == 'approved' ? const Color(0xFF10B981) : Colors.orangeAccent, fontSize: 12)),
-            ],
-          ),
-          Text("₹${loan['amount_requested']}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Color(0xFF10B981))),
-        ],
+    final bool isAwaiting = loan['status'] == 'awaiting_selection';
+    
+    return GestureDetector(
+      onTap: isAwaiting ? () => context.push('/apply') : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: isAwaiting ? const Color(0xFF10B981).withOpacity(0.05) : Colors.white.withOpacity(0.03), 
+          borderRadius: BorderRadius.circular(28), 
+          border: Border.all(color: isAwaiting ? const Color(0xFF10B981).withOpacity(0.5) : Colors.white.withOpacity(0.05))
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(loan['loan_type'] ?? "Personal Loan", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text("Status: ", style: const TextStyle(color: Colors.white24, fontSize: 12)),
+                    Text(isAwaiting ? "CHOOSE YOUR PLAN 💎" : loan['status'].toString().toUpperCase(), 
+                      style: TextStyle(color: isAwaiting ? const Color(0xFF10B981) : (loan['status'] == 'approved' ? const Color(0xFF10B981) : Colors.orangeAccent), fontWeight: FontWeight.bold, fontSize: 11)),
+                  ],
+                ),
+              ],
+            ),
+            Icon(isAwaiting ? Icons.arrow_circle_right_rounded : Icons.chevron_right, color: isAwaiting ? const Color(0xFF10B981) : Colors.white12),
+          ],
+        ),
       ),
     );
   }
