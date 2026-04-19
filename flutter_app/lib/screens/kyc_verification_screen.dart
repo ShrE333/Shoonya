@@ -153,6 +153,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
 
   Future<void> _getLocation() async {
     try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() => _locationText = "GPS: DISABLED");
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() => _locationText = "ACCESS DENIED");
+          return;
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        setState(() => _locationText = "ACCESS BLOCKED");
+        return;
+      }
+
       Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
       setState(() {
         _lat = pos.latitude;
@@ -501,27 +521,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           )
         )),
 
-        SafeArea(child: Column(children: [
-          const Padding(padding: EdgeInsets.all(32), child: Text("IDENTITY PROTOCOL v2", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 10))),
-          
-          // LOCATION HUD (TOP RIGHT)
-          if (_locationText.isNotEmpty)
-            Positioned(
-              top: 32, right: 32,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.gps_fixed, color: Color(0xFF10B981), size: 10),
-                    const SizedBox(width: 8),
-                    Text(_locationText, style: const TextStyle(color: Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 1)),
-                  ],
-                ),
+        // LOCATION HUD (TOP RIGHT - FIXED STACK CHILD)
+        if (_locationText.isNotEmpty)
+          Positioned(
+            top: 60, right: 32,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3))),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.gps_fixed, color: Color(0xFF10B981), size: 10),
+                  const SizedBox(width: 8),
+                  Text(_locationText, style: const TextStyle(color: Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                ],
               ),
             ),
+          ),
 
+        SafeArea(child: Column(children: [
+          const Padding(padding: EdgeInsets.all(32), child: Text("IDENTITY PROTOCOL v2", style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 10))),
           if (_isScanning) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF10B981), borderRadius: BorderRadius.circular(40)), child: const Text("AI SCANNING", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 8))),
           const Spacer(),
           
