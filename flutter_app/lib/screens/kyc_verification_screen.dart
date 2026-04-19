@@ -158,7 +158,6 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
         imageWidth: image.width,
         iouThreshold: 0.4,
         confThreshold: 0.35, 
-        classSpecific: true,
       );
 
       if (mounted) {
