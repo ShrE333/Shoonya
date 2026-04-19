@@ -71,7 +71,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   Future<void> _boot() async {
     await [Permission.microphone, Permission.camera].request();
     final cams = await availableCameras();
-    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.back), ResolutionPreset.medium, enableAudio: false);
+    _cam = CameraController(cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front), ResolutionPreset.medium, enableAudio: false);
     await _cam!.initialize();
     
     // Load YOLO Model (STABLE CPU MODE)
@@ -148,7 +148,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
   void _onCameraImage(CameraImage image) async {
     if (!_isScanning || _isProcessing) return;
     _frameCount++;
-    if (_frameCount % 10 != 0) return; // Ultra-stable for Android hardware
+    if (_frameCount % 4 != 0) return; // Balanced for front-camera stability
     
     _isProcessing = true;
     try {
@@ -351,7 +351,26 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
           if (_isScanning) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF10B981), borderRadius: BorderRadius.circular(40)), child: const Text("AI SCANNING", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 8))),
           const Spacer(),
           
-          GlassBox(child: Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold))),
+          GlassBox(
+            child: Column(
+              children: [
+                Text(_agentText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                if (_isScanning) ...[
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => _autoCapture(),
+                    icon: const Icon(Icons.camera_alt, color: Colors.black, size: 18),
+                    label: const Text("CAPTURE MANUALLY", style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 11)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
 
           const SizedBox(height: 24),
           Container(
