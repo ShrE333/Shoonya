@@ -511,6 +511,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
             ]),
           )
         ]))
+      ])
     );
   }
 
