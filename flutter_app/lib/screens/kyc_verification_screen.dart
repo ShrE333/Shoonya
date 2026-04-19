@@ -492,7 +492,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       });
 
       setState(() => _agentText = "Premium Credit Report Generated. Strategy is Live.");
-      Timer(const Duration(seconds: 3), () => context.go('/dashboard'));
+      Timer(const Duration(seconds: 3), () => context.go('/apply'));
     } catch (e) {
       print("SYNC FATAL: $e");
       context.go('/dashboard');

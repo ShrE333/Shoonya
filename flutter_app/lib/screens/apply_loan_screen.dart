@@ -28,11 +28,12 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
     if (user == null) return;
 
     try {
-      // 1. Check for pending
+      // 1. Check for definitely finalized loans
       final existing = await _supabase.from('loans')
           .select()
           .eq('user_id', user.id)
-          .or('status.eq.pending,status.eq.under_review');
+          .not('selected_offer_index', 'is', null)
+          .or('status.eq.under_review,status.eq.approved');
       
       if (existing.isNotEmpty) {
         setState(() { _hasPendingLoan = true; _isLoading = false; });
@@ -77,11 +78,14 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
         'amount_requested': (selected['amount']).toDouble(),
         'tenure_months': selected['tenure'],
         'interest_rate': (selected['rate']).toDouble(),
-        'status': 'pending',
+        'status': 'pending', 
         'selected_offer_index': _selectedIndex
       }).eq('id', lastLoan['id']);
 
-      if (mounted) context.go('/dashboard');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Loan strategy sent to Admin for final sanction!"), backgroundColor: Color(0xFF10B981)));
+        context.go('/dashboard');
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Submission failed. Try again."), backgroundColor: Colors.redAccent));
