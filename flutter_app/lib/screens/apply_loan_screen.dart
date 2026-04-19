@@ -28,7 +28,24 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
     if (user == null) return;
 
     try {
-      // 1. Check for finalizealized loans (Under Review or Approved)
+      // 1. Prioritize ANY loan that is currently awaiting user selection
+      final draftLoan = await _supabase.from('loans')
+          .select('id, offers')
+          .eq('user_id', user.id)
+          .eq('status', 'awaiting_selection')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (draftLoan != null) {
+        setState(() {
+          _offers = draftLoan['offers'] ?? [];
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // 2. If NO selection is awaiting, then check for existing finalized/under-review loans
       final finalized = await _supabase.from('loans')
           .select()
           .eq('user_id', user.id)
@@ -39,19 +56,7 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
         return;
       }
 
-      // 2. Fetch the draft loan awaiting selection
-      final lastLoan = await _supabase.from('loans')
-          .select('id, offers')
-          .eq('user_id', user.id)
-          .eq('status', 'awaiting_selection')
-          .order('created_at', ascending: false)
-          .limit(1)
-          .single();
-
-      setState(() {
-        _offers = lastLoan['offers'] ?? [];
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     } catch (e) {
       setState(() => _isLoading = false);
     }
