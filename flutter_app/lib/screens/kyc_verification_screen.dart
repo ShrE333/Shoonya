@@ -142,37 +142,46 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     } catch (e) { setState(() => _isSpeaking = false); }
   }
 
-  Future<void> _startVisionStream() async {
-    if (_cam == null || !_isScanning) return;
-    int frameCount = 0;
+  int _frameCount = 0;
+  bool _isProcessing = false;
+
+  void _onCameraImage(CameraImage image) async {
+    if (!_isScanning || _isProcessing) return;
+    _frameCount++;
+    if (_frameCount % 5 != 0) return; // Balanced for high-stability
     
-    await _cam!.startImageStream((CameraImage image) async {
-      frameCount++;
-      if (frameCount % 10 != 0) return; // Balanced for stability
-      
-      final result = await _vision.yoloOnFrame(
+    _isProcessing = true;
+    try {
+      final results = await _vision.yoloOnFrame(
         bytesList: image.planes.map((p) => p.bytes).toList(),
         imageHeight: image.height,
         imageWidth: image.width,
         iouThreshold: 0.4,
-        confThreshold: 0.3, // Ultra-sensitive
-        classThreshold: 0.3,
+        confThreshold: 0.35, 
+        classSpecific: true,
       );
 
       if (mounted) {
-        if (result.isNotEmpty) {
-          setState(() => _yoloResults = result);
-          
-          final targetLabel = _currentStep == 1 ? "Aadhar" : "pan-card";
-          final found = result.any((r) => r['tag'] == targetLabel && r['box'][4] > 0.4);
-          
-          if (found) {
-            _cam!.stopImageStream();
+        setState(() {
+          _yoloResults = results;
+          _isProcessing = false;
+        });
+        
+        for (final res in results) {
+          if ((res['tag'] == 'aadhaar' || res['tag'] == 'pan') && res['box'][4] > 0.45) {
             _autoCapture();
+            break;
           }
         }
       }
-    });
+    } catch (e) {
+      _isProcessing = false;
+    }
+  }
+
+  Future<void> _startVisionStream() async {
+    if (_cam == null || !_isScanning) return;
+    await _cam!.startImageStream(_onCameraImage);
   }
 
   Future<void> _autoCapture() async {
