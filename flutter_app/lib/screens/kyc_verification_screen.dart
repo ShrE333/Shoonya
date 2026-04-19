@@ -280,16 +280,22 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
     await Future.delayed(const Duration(milliseconds: 500)); // H/W Cool down
 
     setState(() { _isListening = true; _currentWords = ""; });
-    await _speech.listen(onResult: (val) {
-      if (!mounted) return;
-      setState(() => _currentWords = val.recognizedWords);
-      if (val.finalResult) {
-        setState(() => _isListening = false);
-        _transcript.add({"role": "user", "text": val.recognizedWords});
-        _currentStep++;
-        _nextStep();
-      }
-    }, localeId: "en-IN", listenMode: ListenMode.confirmation);
+    await _speech.listen(
+      onResult: (val) {
+        if (!mounted) return;
+        setState(() => _currentWords = val.recognizedWords);
+        if (val.finalResult) {
+          setState(() => _isListening = false);
+          _transcript.add({"role": "user", "text": val.recognizedWords});
+          _currentStep++;
+          _nextStep();
+        }
+      },
+      localeId: "en-IN",
+      listenMode: ListenMode.dictation, // Dictation mode is more patient
+      pauseFor: const Duration(seconds: 5), // Added: Wait 5 seconds before giving up
+      listenFor: const Duration(seconds: 60), // Increased: Listen for a full minute
+    );
   }
 
   Future<void> _finish() async {
