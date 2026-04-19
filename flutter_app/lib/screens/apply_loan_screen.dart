@@ -28,22 +28,22 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
     if (user == null) return;
 
     try {
-      // 1. Check for definitely finalized loans
-      final existing = await _supabase.from('loans')
+      // 1. Check for finalizealized loans (Under Review or Approved)
+      final finalized = await _supabase.from('loans')
           .select()
           .eq('user_id', user.id)
-          .not('selected_offer_index', 'is', null)
           .or('status.eq.under_review,status.eq.approved');
       
-      if (existing.isNotEmpty) {
+      if (finalized.isNotEmpty) {
         setState(() { _hasPendingLoan = true; _isLoading = false; });
         return;
       }
 
-      // 2. Fetch latest loan with offers
+      // 2. Fetch the draft loan awaiting selection
       final lastLoan = await _supabase.from('loans')
-          .select('offers')
+          .select('id, offers')
           .eq('user_id', user.id)
+          .eq('status', 'awaiting_selection')
           .order('created_at', ascending: false)
           .limit(1)
           .single();
@@ -69,7 +69,7 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
       final lastLoan = await _supabase.from('loans')
           .select('id')
           .eq('user_id', user!.id)
-          .eq('status', 'pending')
+          .eq('status', 'awaiting_selection')
           .order('created_at', ascending: false)
           .limit(1)
           .single();
@@ -78,7 +78,7 @@ class _ApplyLoanScreenState extends State<ApplyLoanScreen> {
         'amount_requested': (selected['amount']).toDouble(),
         'tenure_months': selected['tenure'],
         'interest_rate': (selected['rate']).toDouble(),
-        'status': 'pending', 
+        'status': 'under_review', 
         'selected_offer_index': _selectedIndex
       }).eq('id', lastLoan['id']);
 

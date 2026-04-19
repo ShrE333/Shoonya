@@ -345,7 +345,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       await Supabase.instance.client.from('loans').insert({
         'user_id': user.id, 
         'amount_requested': (analysis['options'][0]['amount']).toDouble(), 
-        'status': 'pending',
+        'status': 'awaiting_selection', 
         'offers': analysis['options']
       });
 
