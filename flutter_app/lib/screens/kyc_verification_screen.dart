@@ -174,7 +174,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       await Future.delayed(const Duration(seconds: 1));
       
       Position pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.balanced, 
+        desiredAccuracy: LocationAccuracy.low, 
         timeLimit: const Duration(seconds: 10)
       );
       if (mounted) {
