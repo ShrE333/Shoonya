@@ -271,7 +271,7 @@ class _KYCVerificationScreenState extends State<KYCVerificationScreen> {
       final pdf = pw.Document();
       pdf.addPage(pw.Page(build: (pw.Context context) => pw.Center(child: pw.Text("AI CREDIT OFFER - SHOONYA\nApproved Options for User ${user.email}"))));
       final bytes = await pdf.save();
-      await Supabase.instance.client.storage.from('documents').upload('${user.id}/offer_sheet.pdf', bytes, fileOptions: const FileOptions(upsert: true));
+      await Supabase.instance.client.storage.from('documents').uploadBinary('${user.id}/offer_sheet.pdf', bytes, fileOptions: const FileOptions(upsert: true));
 
       setState(() => _agentText = "Credit Strategy Finalized. Check your Hub.");
       Timer(const Duration(seconds: 3), () => context.go('/dashboard'));
@@ -349,5 +349,4 @@ class GlassBox extends StatelessWidget {
       child: child,
     );
   }
-}
 }
